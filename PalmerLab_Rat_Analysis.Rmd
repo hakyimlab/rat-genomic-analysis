@@ -1,0 +1,428 @@
+---
+title: "Gene Expression EDA"
+author: "Tyson Miller"
+date: "6/18/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(devtools)
+library(broom)
+library(data.table)
+```
+
+Data from [here](https://uchicago.app.box.com/folder/102043737114) - genoGex.Rdata has everything we need in it
+There are 5 'gex' RDS files which are the gene expressions for the 5 different tissues, the 'gtf' is the gene annotation, 'phyMap' is the snp annotation, and 'geno' is the genotype matrix
+
+```{r}
+load("~/Desktop/Repos/rat_genomic_analysis/data/PTRS_Data/genoGex.RData")
+```
+
+```{r}
+#transposing gene expression files for the 5 tissues 
+
+n = gexAc$EnsemblGeneID
+gexAc_transpose <- as.data.frame(t(gexAc[,-1]))
+colnames(gexAc_transpose) <- n
+
+n = gexIl$EnsemblGeneID
+gexIl_transpose <- as.data.frame(t(gexIl[,-1]))
+colnames(gexIl_transpose) <- n
+
+n = gexLh$EnsemblGeneID
+gexLh_transpose <- as.data.frame(t(gexLh[,-1]))
+colnames(gexLh_transpose) <- n
+
+n = gexPl$EnsemblGeneID
+gexPl_transpose <- as.data.frame(t(gexPl[,-1]))
+colnames(gexPl_transpose) <- n
+
+n = gexVo$EnsemblGeneID
+gexVo_transpose <- as.data.frame(t(gexVo[,-1]))
+colnames(gexVo_transpose) <- n
+```
+
+```{r}
+# Running inverse normalization on each gene expression
+
+invnorm = function(x) {
+  if(is.null(dim(x))) res = invnorm.vector(x) else
+  res=apply(x,2,invnorm.vector)
+  res
+}
+invnorm.vector = function(x) {yy = rank(x)/(length(x)+1); qnorm(yy)}
+
+
+gexAc_transpose = invnorm(gexAc_transpose)
+
+gexIl_transpose = invnorm(gexIl_transpose)
+
+gexLh_transpose = invnorm(gexLh_transpose)
+
+gexPl_transpose = invnorm(gexPl_transpose)
+
+gexVo_transpose = invnorm(gexVo_transpose)
+```
+
+
+
+```{r}
+# Making the gene annotation file into the correct format for the pipeline
+
+gtf$gene_type = sub(".*?gene_biotype(.*?);.*", "\\1", gtf$Attr)
+gtf$gene_name = sub(".*?gene_name(.*?);.*", "\\1", gtf$Attr)
+
+gene_annotation = subset(gtf, select = -c(Source, Feature, Score, Strand, Attr, Frame) )
+gene_annotation = gene_annotation[, c("Chr","Gene", "gene_name", "Start", "End", "gene_type" )]
+colnames(gene_annotation) = c("chr", "gene_id", "gene_name", "start", "end")
+rownames(gene_annotation) = gene_annotation$gene_id
+```
+
+```{r}
+# Making the snp annotation in the correct format for the pipeline
+
+phyMap <- within(phyMap,  varID <- paste(Chr, Pos, Ref, Alt, sep="_"))
+rownames(phyMap) = phyMap$varID
+phyMap$rsid = phyMap$varID
+colnames(phyMap) = c("snp", "chr", "pos", "refAllele", "effectAllele", 'varID', "rsid")
+```
+
+```{r}
+# Splitting the snp annotation file by chromosome
+s <- setNames(split(phyMap, phyMap$chr), paste0("snp_annot.chr", unique(phyMap$chr)))
+list2env(s, globalenv())
+```
+
+```{r}
+# writing the genotype file to a .txt file so that we can separate it by chromosome using our geneotype parse script.
+
+rownames(geno) = rownames(phyMap)
+write.table(geno, file = "./data/genotype.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+```
+
+```{bash}
+#Splitting the genotype file by chromosome - run this from the rat_genomic_alaysis directory
+
+./scripts/split_genotype_by_chr.py ./data/genotype.txt ./data/'genotype'
+```
+
+
+```{r}
+# Writing the gene expression files to csv files to be used for PEER Factor analysis
+
+write.table(gexAc_transpose, file = 'gexAc.csv', sep = ",", col.names = TRUE, row.names = FALSE)
+
+write.table(gexIl_transpose, file = 'gexIl.csv', sep = ",", col.names = TRUE, row.names = FALSE)
+
+write.table(gexLh_transpose, file = 'gexLh.csv', sep = ",", col.names = TRUE, row.names = FALSE)
+
+write.table(gexPl_transpose, file = 'gexPl.csv', sep = ",", col.names = TRUE, row.names = FALSE)
+
+write.table(gexVo_transpose, file = 'gexVo.csv', sep = ",", col.names = TRUE, row.names = FALSE)
+```
+
+```{bash}
+# Now we are performing PEER factor analysis on each tissue choosing 7 factors
+
+peertool -f ~/Desktop/Repos/rat_genomic_analysis/"gexAc.csv" -n 7 -o peer_Ac --has_header
+
+peertool -f ~/Desktop/Repos/rat_genomic_analysis/"gexIl.csv" -n 7 -o peer_Il --has_header
+
+peertool -f ~/Desktop/Repos/rat_genomic_analysis/"gexLh.csv" -n 7 -o peer_Lh --has_header
+
+peertool -f ~/Desktop/Repos/rat_genomic_analysis/"gexPl.csv" -n 7 -o peer_Pl --has_header
+
+peertool -f ~/Desktop/Repos/rat_genomic_analysis/"gexVo.csv" -n 7 -o peer_Vo --has_header
+```
+
+
+
+```{r}
+# Loading the phenotype file in to create covariate files. For this we are selecting sex, batch number, and batch center as covariates as well as the 7 PEER factors we generate
+
+load("~/Desktop/Repos/rat_genomic_analysis/data/PTRS_Data/Phenotype/P50_raw_trait_values.RData")
+covariatesAc = raw_traits[match(rownames(gexAc_transpose), raw_traits$rfid), ]
+covariatesAc = subset(covariatesAc, select = c(rfid, sex, batchnumber, center))
+
+covariatesIl = raw_traits[match(rownames(gexIl_transpose), raw_traits$rfid), ]
+covariatesIl = subset(covariatesIl, select = c(rfid, sex, batchnumber, center))
+
+covariatesLh = raw_traits[match(rownames(gexLh_transpose), raw_traits$rfid), ]
+covariatesLh = subset(covariatesLh, select = c(rfid, sex, batchnumber, center))
+
+covariatesPl = raw_traits[match(rownames(gexPl_transpose), raw_traits$rfid), ]
+covariatesPl = subset(covariatesPl, select = c(rfid, sex, batchnumber, center))
+
+covariatesVo = raw_traits[match(rownames(gexVo_transpose), raw_traits$rfid), ]
+covariatesVo = subset(covariatesVo, select = c(rfid, sex, batchnumber, center))
+```
+
+```{r}
+# Reading the PEER factor output files to be appended to the covariate file and eventually regressed out of the expression files
+
+peer_factorsAc = read.csv(file = "~/Desktop/Repos/rat_genomic_analysis/peer_Ac/X.csv", header = FALSE)
+
+peer_factorsIl = read.csv(file = "~/Desktop/Repos/rat_genomic_analysis/peer_Il/X.csv", header = FALSE)
+
+peer_factorsLh = read.csv(file = "~/Desktop/Repos/rat_genomic_analysis/peer_Lh/X.csv", header = FALSE)
+
+peer_factorsPl = read.csv(file = "~/Desktop/Repos/rat_genomic_analysis/peer_Pl/X.csv", header = FALSE)
+
+peer_factorsVo = read.csv(file = "~/Desktop/Repos/rat_genomic_analysis/peer_Vo/X.csv", header = FALSE)
+```
+
+
+```{r}
+# Manipulating the PEER factor files so we can append to covariate file
+
+peer_factors_transposedAc = as.data.frame(t(peer_factorsAc))
+colnames(peer_factors_transposedAc) = c('PF1', 'PF2', 'PF3', 'PF4', 'PF5', 'PF6', 'PF7')
+rownames(peer_factors_transposedAc) = rownames(gexAc_transpose)
+
+peer_factors_transposedIl = as.data.frame(t(peer_factorsIl))
+colnames(peer_factors_transposedIl) = c('PF1', 'PF2', 'PF3', 'PF4', 'PF5', 'PF6', 'PF7')
+rownames(peer_factors_transposedIl) = rownames(gexIl_transpose)
+
+peer_factors_transposedLh = as.data.frame(t(peer_factorsLh))
+colnames(peer_factors_transposedLh) = c('PF1', 'PF2', 'PF3', 'PF4', 'PF5', 'PF6', 'PF7')
+rownames(peer_factors_transposedLh) = rownames(gexLh_transpose)
+
+peer_factors_transposedPl = as.data.frame(t(peer_factorsPl))
+colnames(peer_factors_transposedPl) = c('PF1', 'PF2', 'PF3', 'PF4', 'PF5', 'PF6', 'PF7')
+rownames(peer_factors_transposedPl) = rownames(gexPl_transpose)
+
+peer_factors_transposedVo = as.data.frame(t(peer_factorsVo))
+colnames(peer_factors_transposedVo) = c('PF1', 'PF2', 'PF3', 'PF4', 'PF5', 'PF6', 'PF7')
+rownames(peer_factors_transposedVo) = rownames(gexVo_transpose)
+```
+
+
+```{r}
+#initializing matrices to be filled with t-stats, p_vals, and residuals of the regression of each gene vs. the covariates for each tissue. t-stat and p-val matrices are just for diagnostics
+
+#t_statsAc = matrix(nrow = 13, ncol = length(colnames(gexAc_transpose)))
+#p_valsAc = matrix(nrow = 13, ncol = length(colnames(gexAc_transpose)))
+expressionAc = gexAc_transpose
+
+#t_statsIl = matrix(nrow = 13, ncol = length(colnames(gexIl_transpose)))
+#p_valsIl = matrix(nrow = 13, ncol = length(colnames(gexIl_transpose)))
+expressionIl = gexIl_transpose
+
+#t_statsLh = matrix(nrow = 13, ncol = length(colnames(gexLh_transpose)))
+#p_valsLh = matrix(nrow = 13, ncol = length(colnames(gexLh_transpose)))
+expressionLh = gexLh_transpose
+
+#t_statsPl = matrix(nrow = 13, ncol = length(colnames(gexPl_transpose)))
+#p_valsPl = matrix(nrow = 13, ncol = length(colnames(gexPl_transpose)))
+expressionPl = gexPl_transpose
+
+#t_statsVo = matrix(nrow = 13, ncol = length(colnames(gexVo_transpose)))
+#p_valsVo = matrix(nrow = 13, ncol = length(colnames(gexVo_transpose)))
+expressionVo = gexVo_transpose
+```
+
+
+
+```{r}
+# Regressing out the covariates and saving the residuals as the new expression for each tissue
+
+for (i in 1:length(colnames(gexAc_transpose))) {
+    fit = lm(gexAc_transpose[,i] ~ covariatesAc$sex + covariatesAc$batchnumber + peer_factors_transposedAc$PF1 + peer_factors_transposedAc$PF2 + peer_factors_transposedAc$PF3 + peer_factors_transposedAc$PF4 + peer_factors_transposedAc$PF5 + peer_factors_transposedAc$PF6 + peer_factors_transposedAc$PF7)
+    expressionAc[,i] <- fit$residuals
+    #t_statsAc[,i] <- tidy(fit)$statistic
+    #p_valsAc[,i] <- tidy(fit)$p.value
+}
+
+for (i in 1:length(colnames(gexIl_transpose))) {
+    fit = lm(gexIl_transpose[,i] ~ covariatesIl$sex + covariatesIl$batchnumber + peer_factors_transposedIl$PF1 + peer_factors_transposedIl$PF2 + peer_factors_transposedIl$PF3 + peer_factors_transposedIl$PF4 + peer_factors_transposedIl$PF5 + peer_factors_transposedIl$PF6 + peer_factors_transposedIl$PF7)
+    expressionIl[,i] <- fit$residuals
+    #t_statsAc[,i] <- tidy(fit)$statistic
+    #p_valsAc[,i] <- tidy(fit)$p.value
+}
+
+for (i in 1:length(colnames(gexLh_transpose))) {
+    fit = lm(gexLh_transpose[,i] ~ covariatesLh$sex + covariatesLh$batchnumber + peer_factors_transposedLh$PF1 + peer_factors_transposedLh$PF2 + peer_factors_transposedLh$PF3 + peer_factors_transposedLh$PF4 + peer_factors_transposedLh$PF5 + peer_factors_transposedLh$PF6 + peer_factors_transposedLh$PF7)
+    expressionLh[,i] <- fit$residuals
+    #t_statsAc[,i] <- tidy(fit)$statistic
+    #p_valsAc[,i] <- tidy(fit)$p.value
+}
+
+for (i in 1:length(colnames(gexPl_transpose))) {
+    fit = lm(gexPl_transpose[,i] ~ covariatesPl$sex + covariatesPl$batchnumber + peer_factors_transposedPl$PF1 + peer_factors_transposedPl$PF2 + peer_factors_transposedPl$PF3 + peer_factors_transposedPl$PF4 + peer_factors_transposedPl$PF5 + peer_factors_transposedPl$PF6 + peer_factors_transposedPl$PF7)
+    expressionPl[,i] <- fit$residuals
+    #t_statsAc[,i] <- tidy(fit)$statistic
+    #p_valsAc[,i] <- tidy(fit)$p.value
+}
+
+for (i in 1:length(colnames(gexVo_transpose))) {
+    fit = lm(gexVo_transpose[,i] ~ covariatesVo$sex + covariatesVo$batchnumber + peer_factors_transposedVo$PF1 + peer_factors_transposedVo$PF2 + peer_factors_transposedVo$PF3 + peer_factors_transposedVo$PF4 + peer_factors_transposedVo$PF5 + peer_factors_transposedVo$PF6 + peer_factors_transposedVo$PF7)
+    expressionVo[,i] <- fit$residuals
+    #t_statsAc[,i] <- tidy(fit)$statistic
+    #p_valsAc[,i] <- tidy(fit)$p.value
+  }
+```
+
+```{r}
+# Saving the expression RDS objects to be used as arguments in the script
+
+saveRDS(as.matrix(expressionAc), "Ac_expression_transformed.RDS")
+
+saveRDS(as.matrix(expressionIl), "Il_expression_transformed.RDS")
+
+saveRDS(as.matrix(expressionLh), "Lh_expression_transformed.RDS")
+
+saveRDS(as.matrix(expressionPl), "Pl_expression_transformed.RDS")
+
+saveRDS(as.matrix(expressionVo), "Vo_expression_transformed.RDS")
+```
+
+```{r}
+# Saving the SNP annotation RDS objects to be used as arguments in the script - too lazy to write a for loop 
+
+saveRDS(snp_annot.chr1, "snp_annot.chr1.RDS")
+saveRDS(snp_annot.chr2, "snp_annot.chr2.RDS")
+saveRDS(snp_annot.chr3, "snp_annot.chr3.RDS")
+saveRDS(snp_annot.chr4, "snp_annot.chr4.RDS")
+saveRDS(snp_annot.chr5, "snp_annot.chr5.RDS")
+saveRDS(snp_annot.chr6, "snp_annot.chr6.RDS")
+saveRDS(snp_annot.chr7, "snp_annot.chr7.RDS")
+saveRDS(snp_annot.chr8, "snp_annot.chr8.RDS")
+saveRDS(snp_annot.chr9, "snp_annot.chr9.RDS")
+saveRDS(snp_annot.chr10, "snp_annot.chr10.RDS")
+saveRDS(snp_annot.chr11, "snp_annot.chr11.RDS")
+saveRDS(snp_annot.chr12, "snp_annot.chr12.RDS")
+saveRDS(snp_annot.chr13, "snp_annot.chr13.RDS")
+saveRDS(snp_annot.chr14, "snp_annot.chr14.RDS")
+saveRDS(snp_annot.chr15, "snp_annot.chr15.RDS")
+saveRDS(snp_annot.chr16, "snp_annot.chr16.RDS")
+saveRDS(snp_annot.chr17, "snp_annot.chr17.RDS")
+saveRDS(snp_annot.chr18, "snp_annot.chr18.RDS")
+saveRDS(snp_annot.chr19, "snp_annot.chr19.RDS")
+saveRDS(snp_annot.chr20, "snp_annot.chr20.RDS")
+```
+
+```{r}
+# Saving the gene annotation RDS object to be used as an argument in the script
+saveRDS(gene_annotation, "gene_annotation.RDS")
+```
+
+```{bash}
+# Creating the meta data file for each tissue 
+
+./scripts/create_meta_data.py --geno "./data/genotype.txt" --expr "Ac_expression_transformed.RDS" --snpset "1KG" --rsid_label 1 --window 1000000 --out_prefix "./Results/allMetaData/Vo"
+
+./scripts/create_meta_data.py --geno "./data/genotype.txt" --expr "Il_expression_transformed.RDS" --snpset "1KG" --rsid_label 1 --window 1000000 --out_prefix "./Results/allMetaData/Il"
+
+./scripts/create_meta_data.py --geno "./data/genotype.txt" --expr "Lh_expression_transformed.RDS" --snpset "1KG" --rsid_label 1 --window 1000000 --out_prefix "./Results/allMetaData/Lh"
+
+./scripts/create_meta_data.py --geno "./data/genotype.txt" --expr "Pl_expression_transformed.RDS" --snpset "1KG" --rsid_label 1 --window 1000000 --out_prefix "./Results/allMetaData/Pl"
+
+./scripts/create_meta_data.py --geno "./data/genotype.txt" --expr "Vo_expression_transformed.RDS" --snpset "1KG" --rsid_label 1 --window 1000000 --out_prefix "./Results/allMetaData/Vo"
+```
+
+
+```{bash}
+# Running the model training script for each tissue/chromosome pair
+
+
+for i in {1..20}
+do
+  Rscript ./scripts/create_model.R 'Ac' $i .5 1000000
+  Rscript ./scripts/create_model.R 'Il' $i .5 1000000
+  Rscript ./scripts/create_model.R 'Lh' $i .5 1000000
+  Rscript ./scripts/create_model.R 'Pl' $i .5 1000000
+  Rscript ./scripts/create_model.R 'Vo' $i .5 1000000
+done
+  
+```
+
+
+```{bash}
+# Concatenating all of the results files for each tissue
+
+./scripts/make_all_results.sh 'Ac' './Results/all_results_Ac' 0.5 '1KG_snps'
+./scripts/make_all_betas.sh 'Ac' './Results/all_betas_Ac' 0.5 '1KG_snps'
+./scripts/make_all_logs.sh 'Ac' './Results/all_logs_Ac'
+./scripts/make_all_covariances.sh 'Ac' './Results/all_covariances_Ac' 0.5 '1KG_snps'
+
+./scripts/make_all_results.sh 'Il' './Results/all_results_Il' 0.5 '1KG_snps'
+./scripts/make_all_betas.sh 'Il' './Results/all_betas_Il' 0.5 '1KG_snps'
+./scripts/make_all_logs.sh 'Il' './Results/all_logs_Il'
+./scripts/make_all_covariances.sh 'Il' './Results/all_covariances_Il' 0.5 '1KG_snps'
+
+./scripts/make_all_results.sh 'Lh' './Results/all_results_Lh' 0.5 '1KG_snps'
+./scripts/make_all_betas.sh 'Lh' './Results/all_betas_Lh' 0.5 '1KG_snps'
+./scripts/make_all_logs.sh 'Lh' './Results/all_logs_Lh'
+./scripts/make_all_covariances.sh 'Lh' './Results/all_covariances_Lh' 0.5 '1KG_snps'
+
+./scripts/make_all_results.sh 'Pl' './Results/all_results_Pl' 0.5 '1KG_snps'
+./scripts/make_all_betas.sh 'Pl' './Results/all_betas_Pl' 0.5 '1KG_snps'
+./scripts/make_all_logs.sh 'Pl' './Results/all_logs_Pl'
+./scripts/make_all_covariances.sh 'Pl' './Results/all_covariances_Pl' 0.5 '1KG_snps'
+
+./scripts/make_all_results.sh 'Vo' './Results/all_results_Vo' 0.5 '1KG_snps'
+./scripts/make_all_betas.sh 'Vo' './Results/all_betas_Vo' 0.5 '1KG_snps'
+./scripts/make_all_logs.sh 'Vo' './Results/all_logs_Vo'
+./scripts/make_all_covariances.sh 'Vo' './Results/all_covariances_Vo' 0.5 '1KG_snps'
+```
+
+```{bash}
+# Putting these into sql lite databases
+
+./scripts/make_sqlite_db.py --output "./Results/sql/Ac_output_db.db" --results "./Results/all_results_Ac" --construction "./Results/all_logs_Ac" --betas "./Results/all_betas_Ac" --meta "./Results/allMetaData/Ac.allMetaData.txt"
+
+./scripts/make_sqlite_db.py --output "./Results/sql/Il_output_db.db" --results "./Results/all_results_Il" --construction "./Results/all_logs_Il" --betas "./Results/all_betas_Il" --meta "./Results/allMetaData/Il.allMetaData.txt"
+
+./scripts/make_sqlite_db.py --output "./Results/sql/Lh_output_db.db" --results "./Results/all_results_Lh" --construction "./Results/all_logs_Lh" --betas "./Results/all_betas_Lh" --meta "./Results/allMetaData/Lh.allMetaData.txt"
+
+./scripts/make_sqlite_db.py --output "./Results/sql/Pl_output_db.db" --results "./Results/all_results_Pl" --construction "./Results/all_logs_Pl" --betas "./Results/all_betas_Pl" --meta "./Results/allMetaData/Pl.allMetaData.txt"
+
+./scripts/make_sqlite_db.py --output "./Results/sql/Vo_output_db.db" --results "./Results/all_results_Vo" --construction "./Results/all_logs_Vo" --betas "./Results/all_betas_Vo" --meta "./Results/allMetaData/Vo.allMetaData.txt"
+```
+
+```{r}
+# Writing genotype files for each expression file to be used in PrediXcan args
+
+geno_Ac = geno[,match(rownames(Ac_expression_transformed), colnames(geno))]
+geno_Il = geno[,match(rownames(Il_expression_transformed), colnames(geno))]
+geno_Lh = geno[,match(rownames(Lh_expression_transformed), colnames(geno))]
+geno_Pl = geno[,match(rownames(Pl_expression_transformed), colnames(geno))]
+geno_Vo = geno[,match(rownames(Vo_expression_transformed), colnames(geno))]
+
+write.table(geno_Ac, file = "./data/genotype_Ac.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+write.table(geno_Il, file = "./data/genotype_Il.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+write.table(geno_Lh, file = "./data/genotype_Lh.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+write.table(geno_Pl, file = "./data/genotype_Pl.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+write.table(geno_Vo, file = "./data/genotype_Vo.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+```
+
+```{bash}
+conda acvtivate imlabtools
+```
+
+```{r}
+
+```
+
+
+```{bash}
+## Running Predixcan for each model. --you must clone this repository https://github.com/hakyimlab/MetaXcan
+
+
+METAXCAN = "~/Desktop/MetaXcan-master/software" # Change this to path to wherever your MetaXcan directory is
+
+python3 ~/Desktop/MetaXcan-master/software/Predict.py --model_db_path ./Results/sql/Ac_output_db.db --text_genotypes ./data/genotype_Ac.txt --prediction_output ./Results/Predixcan/Ac__predict.txt --prediction_summary_output ./Results/Predixcan/Ac__summary.txt
+```
+
+
+
+
+
+
+
+

@@ -7,14 +7,6 @@ editor_options:
   chunk_output_type: console
 ---
 
-```{r}
-library(tidyverse)
-library(devtools)
-library(broom)
-library(data.table)
-library(RSQLite)
-```
-
 Data from [here](https://uchicago.app.box.com/folder/102043737114) - genoGex.Rdata has everything we need in it
 There are 5 'gex' RDS files which are the gene expressions for the 5 different tissues, the 'gtf' is the gene annotation, 'phyMap' is the snp annotation, and 'geno' is the genotype matrix
 
@@ -32,7 +24,7 @@ phyMap <- within(phyMap,  varID <- paste(Chr, Pos, Ref, Alt, sep="_"))
 rownames(geno) = paste(phyMap$Chr, phyMap$Pos, phyMap$Ref, phyMap$Alt, sep="_")
 ```
 
-```{r, eval=FALSE}
+```{r}
 library(readxl)
 
 pheno <- read_excel("/Users/sabrinami/Github/rat-genomic-analysis/data/Data-From-Abe-Palmer-Lab/Final_P50_traits/P50_raw_traits.xlsx")
@@ -41,30 +33,47 @@ pheno_values <- apply(pheno, 2, function(x) sum(!is.na(x)))
 hist(pheno_values, breaks=20)
 
 
-samples <- data.frame("FID" = crf$rfid, "IID" = crf$rfid)
-
 ```
 
 
 
 ```{r, eval=FALSE}
-samples_geno <- data.frame(geno[, match(crf$rfid, colnames(geno))])
+samples <- data.frame("FID" = pheno$rfid, "IID" = pheno$rfid)
 
-samples_geno <- mutate(samples_geno, variant_id = row.names(samples_geno), variant_id_dup = variant_id, MAF = 0)
+samples_geno <- geno[, match(colnames(geno), pheno$rfid)]
+samples_geno <- cbind(samples_geno, row.names(geno), row.names(geno), 0)
 samples_geno <- separate(samples_geno, variant_id_dup, c("chromosome", "position", "allele1", "allele2"), "_")
 samples_geno <- select(samples_geno, chromosome, variant_id, position, allele1, allele2, MAF, everything())
+
 write.table(samples_geno, "/Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/chr1_20.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
 write.table(samples, "/Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/samples.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
 
-write.table(crf, "/Users/sabrinami/Github/rat-genomic-analysis/output/phenotypes/crf_MI_active_responses.txt", sep = "\t", quote = FALSE, col.names = TRUE, row.names = FALSE)
+```
+
+# Reformat Prediction Model
+```{r, eval=FALSE}
+library(RSQLite)
+library(tidyverse)
+conn <- dbConnect(RSQLite::SQLite(), "/Users/sabrinami/Github/rat-genomic-analysis/data/sql/Ac_output_db.db")
+weights <- dbGetQuery(conn, 'select * from weights')
+weights <- weights %>% mutate(varID = rsid) %>% select(gene, rsid, varID, ref_allele, eff_allele, weight)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra %>% rename(n.snps.in.model = n.snps, pred.perf.pval = pval, pred.perf.R2 = R2) %>% mutate(pred.perf.qval = NA)
+extra <- extra[, c(1,2,4,3,5,6)]
+dbWriteTable(conn, 'weights', weights, overwrite=TRUE)
+dbWriteTable(conn, 'extra', extra, overwrite=TRUE)
+dbDisconnect(conn)
 
 ```
 
-# Run Association
+# Run Predict
 
 ```{bash, eval=FALSE}
+conda activate imlabtools
+
 python3 /Users/sabrinami/Github/MetaXcan/software/Predict.py \
---model_db_path /Users/sabrinami/Github/rat-genomic-analysis/output/models/Ac.db  \
+--model_db_path /Users/sabrinami/Github/rat-genomic-analysis/data/sql/Ac_output_db.db  \
 --text_genotypes /Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/chr1_20.txt.gz \
 --text_sample_ids /Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/samples.txt \
 --prediction_output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Ac__predict.txt \
@@ -74,147 +83,12 @@ python3 /Users/sabrinami/Github/MetaXcan/software/Predict.py \
 
 ```
 
-```{bash, eval=FALSE}
-python3 /Users/sabrinami/Github/MetaXcan/software/PrediXcanAssociation.py \
---expression_file /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Ac__predict.txt \
---input_phenos_file /Users/sabrinami/Github/rat-genomic-analysis/output/phenotypes/crf_MI_active_responses.txt \
---input_phenos_column crf_MI_active_responses \
---output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Ac__association.txt \
---verbosity 1 \
---throw
-
-```
-
-## Run MulTiXcan.py
-
-```{bash, eval=FALSE}
-python /Users/sabrinami/Github/MetaXcan/software/MulTiXcan.py \
---expression_folder /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan \
---expression_pattern "(.*)__predict.txt" \
---input_phenos_file /Users/sabrinami/Github/rat-genomic-analysis/output/phenotypes/crf_MI_active_responses.txt \
---input_phenos_column crf_MI_active_responses \
---output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/mt_predixcan.txt \
---verbosity 1 \
---throw
-
-```
-
-## Plot z-scores
-
-```{r}
-library(data.table)
-Ac_association <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Ac__association.txt")
-Il_association <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Il__association.txt")
-Lh_association <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Lh__association.txt")
-Pl_association <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Pl__association.txt")
-Vo_association <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Vo__association.txt")
-multi_tissue_association <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/mt_predixcan.txt")
-
-```
-
-```{r}
-suppressPackageStartupMessages(library(UpSetR))
-suppressPackageStartupMessages(library(tidyverse))
-
-scatter_base_theme_ = function(base_size=15) {
-  theme_bw(base_size = base_size) +
-    theme(panel.border = element_blank(),
-          panel.grid.major = element_blank(),
-          panel.grid.minor = element_blank(),
-          axis.line = element_line(colour = "#170a45", size = .5),
-          axis.ticks = element_line(colour = "#170a45", size = .2),
-          axis.text = element_text(color = '#170a45'))
-}
-
-gg_qqplot <- function(ps, ci = 0.95, max_yval = 30) {
-  # Many thanks to github user slowkow for this function
-  # https://gist.github.com/slowkow/9041570
-  ps <- ps[!is.na(ps)]
-  n  <- length(ps)
-  bf <- (1 - ci) / n
-  df <- data.frame(
-    observed = -log10(sort(ps)),
-    expected = -log10(ppoints(n)),
-    clower   = -log10(qbeta(p = (1 - ci) / 2, shape1 = 1:n, shape2 = n:1)),
-    cupper   = -log10(qbeta(p = (1 + ci) / 2, shape1 = 1:n, shape2 = n:1))
-  )
-  df$observed[df$observed > max_yval] <- max_yval
-  log10Pe <- expression(paste("Expected -log"[10], plain(P)))
-  log10Po <- expression(paste("Observed -log"[10], plain(P)))
-  ggplot(df) +
-    geom_point(aes(expected, observed), size = 3) +
-    geom_abline(intercept = 0, slope = 1, alpha = 0.5) +
-    geom_line(aes(expected, cupper), linetype = 2) +
-    geom_line(aes(expected, clower), linetype = 2) +
-    xlab(log10Pe) +
-    ylab(log10Po) +
-    geom_hline(yintercept = -log10(bf)) +
-    scatter_base_theme_()
-}
-```
-
-MulTiXcan pvalues:
-
-```{r}
-gg_qqplot(multi_tissue_association$pvalue)
-
-
-```
-
-PrediXcan with Ac tissue model:
-
-```{r}
-gg_qqplot(Ac_association$pvalue)
-
-```
-
-PrediXcan with Il tissue model:
-
-```{r}
-gg_qqplot(Il_association$pvalue)
-
-```
-
-PrediXcan with Lh tissue model:
-
-```{r}
-gg_qqplot(Lh_association$pvalue)
-
-```
-
-PrediXcan with Pl tissue model:
-
-```{r}
-gg_qqplot(Pl_association$pvalue)
-
-```
-
-PrediXcan with Vo tissue model:
-
-```{r}
-gg_qqplot(Vo_association$pvalue)
-
-```
-
-```{r}
-significant_genes_Ac <- Ac_association %>% filter(pvalue < 0.05/nrow(Ac_association)) %>% arrange(pvalue)
-significant_genes_Il <- Il_association %>% filter(pvalue < 0.05/nrow(Il_association)) %>% arrange(pvalue)
-significant_genes_Lh <- Lh_association %>% filter(pvalue < 0.05/nrow(Lh_association)) %>% arrange(pvalue)
-significant_genes_Pl <- Pl_association %>% filter(pvalue < 0.05/nrow(Pl_association)) %>% arrange(pvalue)
-significant_genes_Vo <- Vo_association %>% filter(pvalue < 0.05/nrow(Vo_association)) %>% arrange(pvalue)
-significant_genes_multi_tissue <- multi_tissue_association %>% filter(pvalue < 0.05/nrow(multi_tissue_association)) %>% arrange(pvalue)
-
-significant_genes <- list(MulTi = significant_genes_multi_tissue$gene,
-              Ac = significant_genes_Ac$gene,
-              Il = significant_genes_Il$gene,
-              Lh = significant_genes_Lh$gene,
-              Pl = significant_genes_Pl$gene,
-              Vo = significant_genes_Vo$gene)
-upset(fromList(significant_genes), order.by = 'freq', empty.intersections = 'on')
-```
 
 # Haky's analysis
 ```{r}
+library(tidyverse)
+library(data.table)
+Ac_predict <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Ac__predict.txt")
 
 tempo = pheno %>% select(rfid,sex,color,batchnumber) %>% inner_join(Ac_predict,by=c("rfid"="IID"))
 
@@ -243,7 +117,7 @@ for(cc in 6:8041){
 }
 
 pthres = 0.05/ngenes ## bonferroni correction
-genelist[coefarray[,"tempo$colorblack","Pr(>|t|)"] < pthres]
+colorblack_genes <- genelist[coefarray[,"tempo$colorblack","Pr(>|t|)"] < pthres]
 
 
 ```
@@ -259,6 +133,9 @@ pp = phenolist[1]
 gg = genelist[1]
 ## does batch have an effect on phenotypes
 
+```
+
+```{r, eval=FALSE}
 ## this function calculates the p-value fiven the fstatistc
  mypf = function(fit0){
   fstat= fit0$fstatistic
@@ -276,15 +153,78 @@ if(pval<0.001) print(pval)
 
 ```
 
+# Phenotype Gene Association
 
-```{r}
+```{r, eval=FALSE}
 
+phenomearray = array(NA,c(8041-6+1, npheno, 4))
+dimnames(phenomearray)[[1]] = genelist
+dimnames(phenomearray)[[2]] = phenolist
+dimnames(phenomearray)[[3]] = colnames(coef(fit))
+pcount = 1
+gcount = 1
+for(pp in phenolist) {
+  print(pp)
+  gcount = 1
+  for(gg in genelist) {
+    fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+    phenomearray[gcount, pcount, ] = coef(fit)[-1,]
+    gcount = gcount + 1
+  }
+  pcount = pcount + 1
+}
 
-##for(pp in phenolist)
-##for(gg in genolist)
-fit = summary( lm(tempo2[[pp]] ~ batchnumber + sex  + tempo2[[gg]],data=tempo2 ) )
+saveRDS(phenomearray, "/Users/sabrinami/Github/rat-genomic-analysis/output/phenomearray.rds")
+
 
 ```
 
+# Annotate Genes
+```{r}
+library(biomaRt)
+ensembl = useMart(biomart="ENSEMBL_MART_ENSEMBL", dataset = "rnorvegicus_gene_ensembl")
+orth.rat = getBM( attributes=
+                    c("ensembl_gene_id",
+                      "chromosome_name",
+                      "start_position",
+                      "end_position"),
+                  values =TRUE,
+                  mart = ensembl,
+                  bmHeader=FALSE)
 
+gene_annot = data.frame(gene = genelist)
+gene_annot = inner_join(gene_annot, orth.rat, by = c("gene" = "ensembl_gene_id"))
+```
+
+# Plots
+
+```{r}
+library(qqman)
+phenomearray2 <- readRDS("/Users/sabrinami/Github/rat-genomic-analysis/output/phenomearray.rds")
+pcount = 1
+for(pcount in 1:npheno) {
+  
+  
+  pvalues <- data.frame(pval = phenomearray2[,pcount,4])
+  pvalues$gene <- rownames(pvalues)
+  pvalues <- inner_join(pvalues, gene_annot, by = "gene")
+  pvalues$chromosome_name <- as.integer(pvalues$chromosome_name)
+  pvalues$start_position <- as.integer(pvalues$start_position)
+  pvalues$end_position <- as.integer(pvalues$end_position)
+  
+  PHENO <- dimnames(phenomearray2)[[2]][pcount]
+  MAN <- glue::glue("/Users/sabrinami/Github/rat-genomic-analysis/Results/plots/{PHENO}_manhattan.png")
+  QQ <- glue::glue("/Users/sabrinami/Github/rat-genomic-analysis/Results/plots/{PHENO}_qq.png")
+  png(MAN)
+  manhattan(pvalues, chr = "chromosome_name", bp = "start_position", p = "pval", snp = "gene")
+  dev.off()
+  
+  
+  png(QQ)
+  qq(pvalues$pval)
+  dev.off()
+}
+
+
+```
 

@@ -45,8 +45,8 @@ samples_geno <- cbind(samples_geno, row.names(geno), row.names(geno), 0)
 samples_geno <- separate(samples_geno, variant_id_dup, c("chromosome", "position", "allele1", "allele2"), "_")
 samples_geno <- select(samples_geno, chromosome, variant_id, position, allele1, allele2, MAF, everything())
 
-write.table(samples_geno, "/Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/chr1_20.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
-write.table(samples, "/Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/samples.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
+write.table(samples_geno, "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/genotypes/chr1_20.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
+write.table(samples, "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/genotypes/samples.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
 
 ```
 
@@ -55,6 +55,70 @@ write.table(samples, "/Users/sabrinami/Github/rat-genomic-analysis/output/genoty
 library(RSQLite)
 library(tidyverse)
 conn <- dbConnect(RSQLite::SQLite(), "/Users/sabrinami/Github/rat-genomic-analysis/data/sql/Ac_output_db.db")
+weights <- dbGetQuery(conn, 'select * from weights')
+weights <- weights %>% mutate(varID = rsid) %>% select(gene, rsid, varID, ref_allele, eff_allele, weight)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra %>% rename(n.snps.in.model = n.snps, pred.perf.pval = pval, pred.perf.R2 = R2) %>% mutate(pred.perf.qval = NA)
+extra <- extra[, c(1,2,4,3,5,6)]
+dbWriteTable(conn, 'weights', weights, overwrite=TRUE)
+dbWriteTable(conn, 'extra', extra, overwrite=TRUE)
+dbDisconnect(conn)
+
+```
+
+## Il
+
+```{r}
+conn <- dbConnect(RSQLite::SQLite(), "/Users/sabrinami/Github/rat-genomic-analysis/data/sql/Il_output_db.db")
+weights <- dbGetQuery(conn, 'select * from weights')
+weights <- weights %>% mutate(varID = rsid) %>% select(gene, rsid, varID, ref_allele, eff_allele, weight)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra %>% rename(n.snps.in.model = n.snps, pred.perf.pval = pval, pred.perf.R2 = R2) %>% mutate(pred.perf.qval = NA)
+extra <- extra[, c(1,2,4,3,5,6)]
+dbWriteTable(conn, 'weights', weights, overwrite=TRUE)
+dbWriteTable(conn, 'extra', extra, overwrite=TRUE)
+dbDisconnect(conn)
+
+```
+
+# Lh
+
+```{r}
+conn <- dbConnect(RSQLite::SQLite(), "/Users/sabrinami/Github/rat-genomic-analysis/data/sql/Lh_output_db.db")
+weights <- dbGetQuery(conn, 'select * from weights')
+weights <- weights %>% mutate(varID = rsid) %>% select(gene, rsid, varID, ref_allele, eff_allele, weight)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra %>% rename(n.snps.in.model = n.snps, pred.perf.pval = pval, pred.perf.R2 = R2) %>% mutate(pred.perf.qval = NA)
+extra <- extra[, c(1,2,4,3,5,6)]
+dbWriteTable(conn, 'weights', weights, overwrite=TRUE)
+dbWriteTable(conn, 'extra', extra, overwrite=TRUE)
+dbDisconnect(conn)
+
+```
+
+# Pl
+
+```{r}
+conn <- dbConnect(RSQLite::SQLite(), "/Users/sabrinami/Github/rat-genomic-analysis/data/sql/Pl_output_db.db")
+weights <- dbGetQuery(conn, 'select * from weights')
+weights <- weights %>% mutate(varID = rsid) %>% select(gene, rsid, varID, ref_allele, eff_allele, weight)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra %>% rename(n.snps.in.model = n.snps, pred.perf.pval = pval, pred.perf.R2 = R2) %>% mutate(pred.perf.qval = NA)
+extra <- extra[, c(1,2,4,3,5,6)]
+dbWriteTable(conn, 'weights', weights, overwrite=TRUE)
+dbWriteTable(conn, 'extra', extra, overwrite=TRUE)
+dbDisconnect(conn)
+
+```
+
+# Vo
+
+```{r}
+conn <- dbConnect(RSQLite::SQLite(), "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/sql/Vo_output_db.db")
 weights <- dbGetQuery(conn, 'select * from weights')
 weights <- weights %>% mutate(varID = rsid) %>% select(gene, rsid, varID, ref_allele, eff_allele, weight)
 
@@ -83,6 +147,62 @@ python3 /Users/sabrinami/Github/MetaXcan/software/Predict.py \
 
 ```
 
+```{bash, eval=FALSE}
+conda activate imlabtools
+
+python3 /Users/sabrinami/Github/MetaXcan/software/Predict.py \
+--model_db_path /Users/sabrinami/Github/rat-genomic-analysis/data/sql/Il_output_db.db  \
+--text_genotypes /Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/chr1_20.txt.gz \
+--text_sample_ids /Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/samples.txt \
+--prediction_output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Il__predict.txt \
+--prediction_summary_output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Il__summary.txt \
+--verbosity 1 \
+--throw
+
+```
+
+
+```{bash, eval=FALSE}
+conda activate imlabtools
+
+python3 /Users/sabrinami/Github/MetaXcan/software/Predict.py \
+--model_db_path /Users/sabrinami/Github/rat-genomic-analysis/data/sql/Lh_output_db.db  \
+--text_genotypes /Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/chr1_20.txt.gz \
+--text_sample_ids /Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/samples.txt \
+--prediction_output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Lh__predict.txt \
+--prediction_summary_output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Lh__summary.txt \
+--verbosity 1 \
+--throw
+
+```
+
+```{bash, eval=FALSE}
+conda activate imlabtools
+
+python3 /Users/sabrinami/Github/MetaXcan/software/Predict.py \
+--model_db_path /Users/sabrinami/Github/rat-genomic-analysis/data/sql/Pl_output_db.db  \
+--text_genotypes /Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/chr1_20.txt.gz \
+--text_sample_ids /Users/sabrinami/Github/rat-genomic-analysis/output/genotypes/samples.txt \
+--prediction_output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Pl__predict.txt \
+--prediction_summary_output /Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Pl__summary.txt \
+--verbosity 1 \
+--throw
+
+```
+
+```{bash, eval=FALSE}
+conda activate imlabtools
+
+python3 /Users/sabrinami/Github/MetaXcan/software/Predict.py \
+--model_db_path /Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/sql/Vo_output_db.db  \
+--text_genotypes /Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/genotypes/chr1_20.txt.gz  \
+--text_sample_ids /Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/genotypes/samples.txt \
+--prediction_output /Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/Results/PrediXcan/Vo__predict.txt \
+--prediction_summary_output /Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/Results/PrediXcan/Vo__summary.txt \
+--verbosity 1 \
+--throw
+
+```
 
 # Haky's analysis
 ```{r}
@@ -153,6 +273,7 @@ if(pval<0.001) print(pval)
 
 ```
 
+
 # Phenotype Gene Association
 
 ```{r, eval=FALSE}
@@ -174,13 +295,193 @@ for(pp in phenolist) {
   pcount = pcount + 1
 }
 
-saveRDS(phenomearray, "/Users/sabrinami/Github/rat-genomic-analysis/output/phenomearray.rds")
+saveRDS(phenomearray, "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/Ac_phenomearray.rds")
+
+
+```
+
+## Il
+```{r}
+library(data.table)
+library(tidyverse)
+library(readxl)
+
+pheno <- read_excel("/Users/sabrinami/Github/rat-genomic-analysis/data/Data-From-Abe-Palmer-Lab/Final_P50_traits/P50_raw_traits.xlsx")
+
+Il_predict <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Il__predict.txt")
+
+tempo2 = pheno  %>% inner_join(Il_predict,by=c("rfid"="IID"))
+npheno = ncol(pheno) - 5
+phenomearray = array(NA,c(8856, npheno, 4))
+phenolist = names(pheno)[-c(1:5)]
+genelist = names(tempo2)[-c(1:446)]
+pp = phenolist[1]
+gg = genelist[1]
+fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+## does batch have an effect on phenotypes
+
+```
+
+```{r}
+dimnames(phenomearray)[[1]] = genelist
+dimnames(phenomearray)[[2]] = phenolist
+dimnames(phenomearray)[[3]] = colnames(coef(fit))
+pcount = 1
+gcount = 1
+for(pp in phenolist) {
+  print(pp)
+  gcount = 1
+  for(gg in genelist) {
+    fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+    phenomearray[gcount, pcount, ] = coef(fit)[-1,]
+    gcount = gcount + 1
+  }
+  pcount = pcount + 1
+}
+
+saveRDS(phenomearray, "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/Il_phenomearray.rds")
+
+
+```
+
+## Lh
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(readxl)
+
+pheno <- read_excel("/Users/sabrinami/Github/rat-genomic-analysis/data/Data-From-Abe-Palmer-Lab/Final_P50_traits/P50_raw_traits.xlsx")
+
+Lh_predict <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Lh__predict.txt")
+
+tempo2 = pheno  %>% inner_join(Lh_predict,by=c("rfid"="IID"))
+npheno = ncol(pheno) - 5
+phenomearray = array(NA,c(8244, npheno, 4))
+phenolist = names(pheno)[-c(1:5)]
+genelist = names(tempo2)[-c(1:446)]
+pp = phenolist[1]
+gg = genelist[1]
+fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+## does batch have an effect on phenotypes
+
+```
+
+```{r}
+dimnames(phenomearray)[[1]] = genelist
+dimnames(phenomearray)[[2]] = phenolist
+dimnames(phenomearray)[[3]] = colnames(coef(fit))
+pcount = 1
+gcount = 1
+for(pp in phenolist) {
+  print(pp)
+  gcount = 1
+  for(gg in genelist) {
+    fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+    phenomearray[gcount, pcount, ] = coef(fit)[-1,]
+    gcount = gcount + 1
+  }
+  pcount = pcount + 1
+}
+
+saveRDS(phenomearray, "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/Lh_phenomearray.rds")
+
+
+```
+
+## Pl
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(readxl)
+
+pheno <- read_excel("/Users/sabrinami/Github/rat-genomic-analysis/data/Data-From-Abe-Palmer-Lab/Final_P50_traits/P50_raw_traits.xlsx")
+
+Pl_predict <- fread("/Users/sabrinami/Github/rat-genomic-analysis/Results/PrediXcan/Pl__predict.txt")
+
+tempo2 = pheno  %>% inner_join(Pl_predict,by=c("rfid"="IID"))
+npheno = ncol(pheno) - 5
+phenomearray = array(NA,c(8315, npheno, 4))
+phenolist = names(pheno)[-c(1:5)]
+genelist = names(tempo2)[-c(1:446)]
+pp = phenolist[1]
+gg = genelist[1]
+fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+## does batch have an effect on phenotypes
+
+```
+
+```{r}
+dimnames(phenomearray)[[1]] = genelist
+dimnames(phenomearray)[[2]] = phenolist
+dimnames(phenomearray)[[3]] = colnames(coef(fit))
+pcount = 1
+gcount = 1
+for(pp in phenolist) {
+  print(pp)
+  gcount = 1
+  for(gg in genelist) {
+    fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+    phenomearray[gcount, pcount, ] = coef(fit)[-1,]
+    gcount = gcount + 1
+  }
+  pcount = pcount + 1
+}
+
+saveRDS(phenomearray, "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/Pl_phenomearray.rds")
+
+
+```
+
+# Vo
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(readxl)
+
+pheno <- read_excel("/Users/sabrinami/Github/rat-genomic-analysis/data/Data-From-Abe-Palmer-Lab/Final_P50_traits/P50_raw_traits.xlsx")
+
+Vo_predict <- fread("/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/Results/PrediXcan/Vo__predict.txt")
+
+tempo2 = pheno  %>% inner_join(Vo_predict,by=c("rfid"="IID"))
+npheno = ncol(pheno) - 5
+
+phenomearray = array(NA,c(8315, npheno, 4))
+phenolist = names(pheno)[-c(1:5)]
+genelist = names(tempo2)[-c(1:446)]
+pp = phenolist[1]
+gg = genelist[1]
+fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+## does batch have an effect on phenotypes
+
+```
+
+```{r}
+dimnames(phenomearray)[[1]] = genelist
+dimnames(phenomearray)[[2]] = phenolist
+dimnames(phenomearray)[[3]] = colnames(coef(fit))
+pcount = 1
+gcount = 1
+for(pp in phenolist) {
+  print(pp)
+  gcount = 1
+  for(gg in genelist) {
+    fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+    phenomearray[gcount, pcount, ] = coef(fit)[-1,]
+    gcount = gcount + 1
+  }
+  pcount = pcount + 1
+}
+
+saveRDS(phenomearray, "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/Vo_phenomearray.rds")
 
 
 ```
 
 # Annotate Genes
-```{r}
+```{r, eval=FALSE}
 library(biomaRt)
 ensembl = useMart(biomart="ENSEMBL_MART_ENSEMBL", dataset = "rnorvegicus_gene_ensembl")
 orth.rat = getBM( attributes=
@@ -194,18 +495,22 @@ orth.rat = getBM( attributes=
 
 gene_annot = data.frame(gene = genelist)
 gene_annot = inner_join(gene_annot, orth.rat, by = c("gene" = "ensembl_gene_id"))
+
+saveRDS(gene_annot, "/Users/sabrinami/Box/imlab-data/data-Github/rat-genomic-analysis/output/gene_annot.rds")
 ```
 
 # Plots
 
 ```{r}
 library(qqman)
-phenomearray2 <- readRDS("/Users/sabrinami/Github/rat-genomic-analysis/output/phenomearray.rds")
+phenomearray_Ac <- readRDS("/Users/sabrinami/Github/rat-genomic-analysis/output/phenomearray.rds")
+gene_annot <- readRDS("/Users/sabrinami/Github/rat-genomic-analysis/output/gene_annot.rds")
+
 pcount = 1
 for(pcount in 1:npheno) {
   
   
-  pvalues <- data.frame(pval = phenomearray2[,pcount,4])
+  pvalues <- data.frame(pval = phenomearray_Ac[,pcount,4])
   pvalues$gene <- rownames(pvalues)
   pvalues <- inner_join(pvalues, gene_annot, by = "gene")
   pvalues$chromosome_name <- as.integer(pvalues$chromosome_name)

@@ -1,0 +1,192 @@
+---
+title: "Rat_PTRS_weights_Humans"
+author: "Natasha Santhanam"
+date: "11/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(data.table)
+library(readxl)
+library(qqman)
+library(arrow)
+library(RSQLite)
+library(glmnet)
+library(GenomicRanges)
+library(liftOver)
+"%&%" = function(a,b) paste(a,b,sep="")
+dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+```{r file dir, eval=FALSE}
+data.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/"
+orth.rats <- read_tsv(data.dir %&% "expression/ortholog_genes_rats_humans.tsv", col_names = TRUE)
+```
+
+
+# Read in Weights and Expression and do some data wrangling
+Do first with Height then BMI
+
+```{r read in weights and expression, eval=FALSE}
+weights <- read_tsv(data.dir %&% "PTRS_weights/elastic_net_alpha_0.1_British.export_model/weights.height.tsv.gz")
+#weights <- read_tsv(data.dir %&% "PTRS_weights/elastic_net_alpha_0.1_British.export_model/weights.bmi.tsv.gz")
+weights$gene_id <- sapply(strsplit(weights$gene_id, "\\."), `[`, 1)
+
+# Here we use predicted expression not predicted and make sure to use human ensembl id gene name
+pred_expr <- read_tsv(data.dir %&% "prediXcan/rat_metabolic_Ac__predict.txt") %>% select(-c(FID))
+
+#filter only for genes that have a human ortholog
+pred_expr <- pred_expr %>% select(c(IID, intersect(colnames(pred_expr), orth.rats$rnorvegicus_homolog_ensembl_gene) ))
+
+
+#change name to human ensembl id in humans
+colnames(pred_expr)[2:ncol(pred_expr)] <- orth.rats[match(colnames(pred_expr)[2:ncol(pred_expr)], orth.rats$rnorvegicus_homolog_ensembl_gene), 1] %>% .[["ensembl_gene_id"]]
+  
+#Do inner join of all genes in weight and expression files - 2715 genes in common between the two
+rownames(weights) <- weights$gene_id
+weights <- weights[intersect(colnames(pred_expr), weights$gene_id), ]
+expr <- pred_expr[, intersect(colnames(pred_expr), weights$gene_id)]
+expr <- expr %>%  mutate(ID = pred_expr$IID, .before = "ENSG00000055211")
+```
+
+
+# Generate predicted values for Height using all models
+```{r generate predicted trait, eval=FALSE}
+fn_generate_trait = function(exp, weights)
+  {
+   nrats = length(exp$ID)
+   nmodels = ncol(weights) - 1
+   pred_height <- matrix(0, nrow = nrats, ncol = nmodels)
+   for(i in 1:nmodels) {
+     c1 <- as.matrix(weights[,i+1])
+     for(j in 1:nrats) {
+       df <- as.matrix(exp[j, 2:ncol(exp)])
+       pred_height[j,i] <- df %*% c1
+     }
+   }
+   rownames(pred_height) <- exp$ID
+   colnames(pred_height) <- colnames(weights)[2:ncol(weights)]
+}
+```
+
+
+
+# Compare all values across different models to actual BMI and Height
+
+```{r read in pred trait}
+pred_height <- readRDS(dir %&% "rat_pred_height_w_Human_PTRS.RDS")
+pred_BMI <- readRDS(dir %&% "rat_pred_bmi_w_Human_PTRS.RDS")
+
+all_rats <- read_tsv(dir %&% "all_names.txt", col_names = TRUE)
+
+pheno <- read_csv(dir %&% "processed_obesity_rat_Palmer_phenotypes.csv") %>% dplyr::select(c(rat_rfid, bmi_bodylength_w_tail, bmi_bodylength_wo_tail, bodylength_w_tail, bodylength_wo_tail, tail_length)) 
+pheno <- pheno %>% filter(!(rat_rfid  %in% all_rats$ID))
+```
+
+# Remove overlap of rats that were made in Prediction Models 
+# about 66 rats that overlap
+```{r}
+pred_height <- pred_height[-na.omit(match(all_rats$ID, rownames(pred_height))), ]
+pred_BMI <- pred_BMI[-na.omit(match(all_rats$ID, rownames(pred_BMI))), ]
+```
+
+```{r check number of genes in each model}
+weights_bmi <- readRDS("/Users/natashasanthanam/Downloads/weights.bmi.annot.RDS") 
+weights_height <-  readRDS("/Users/natashasanthanam/Downloads/weights.height.annot.RDS")  
+
+n_genes_bmi = as.matrix(apply(weights_bmi, 2, function(x) sum(x != 0 )))
+n_genes_height = as.matrix(apply(weights_height, 2, function(x) sum(x != 0 )))
+```
+
+
+# Create Dataframes with the correlation coefficient between trait in rats and ones predicted using PTRS from Humans
+```{r check correlation for BMI }
+bmi_with_tail <- pheno %>% dplyr::select(c(rat_rfid, bmi_bodylength_w_tail)) %>% na.omit()
+tempo <- pred_BMI[na.omit(match(bmi_with_tail$rat_rfid, rownames(pred_BMI))), ]
+
+bmi_w_tail_df <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n_genes_in_model = numeric(), conf.int.min = numeric(), conf.int.max = numeric())
+for(i in 1:ncol(tempo)){
+  bmi_w_tail_df[i,1] <- cor.test(bmi_with_tail$bmi_bodylength_w_tail, tempo[,i])$estimate
+  bmi_w_tail_df[i,2] <- cor.test(bmi_with_tail$bmi_bodylength_w_tail, tempo[,i])$p.value
+  bmi_w_tail_df[i,3] <- paste("model", i, sep = "_")
+  bmi_w_tail_df[i,4] <- n_genes_bmi[i,1]
+  bmi_w_tail_df[i,5] <- cor.test(bmi_with_tail$bmi_bodylength_w_tail, tempo[,i])$conf.int[1]
+  bmi_w_tail_df[i,6] <- cor.test(bmi_with_tail$bmi_bodylength_w_tail, tempo[,i])$conf.int[2]
+}
+
+
+bmi_without_tail <- pheno %>% dplyr::select(c(rat_rfid, bmi_bodylength_wo_tail)) %>% na.omit()
+tempo <- pred_BMI[na.omit(match(bmi_without_tail$rat_rfid, rownames(pred_BMI))), ]
+bmi_wo_tail_df <- data.frame(estimate = numeric(), pvalue = numeric(),  model = character(), n_genes_in_model = numeric(), conf.int.min = numeric(), conf.int.max = numeric())
+for(i in 1:ncol(tempo)){
+  bmi_wo_tail_df[i,1] <- cor.test(bmi_without_tail$bmi_bodylength_wo_tail, tempo[,i])$estimate
+  bmi_wo_tail_df[i,2] <- cor.test(bmi_without_tail$bmi_bodylength_wo_tail, tempo[,i])$p.value
+  bmi_wo_tail_df[i,3] <- paste("model", i, sep = "_")
+  bmi_wo_tail_df[i,4] <- n_genes_bmi[i,1]
+  bmi_wo_tail_df[i,5] <- cor.test(bmi_without_tail$bmi_bodylength_wo_tail, tempo[,i])$conf.int[1]
+  bmi_wo_tail_df[i,6] <- cor.test(bmi_without_tail$bmi_bodylength_wo_tail, tempo[,i])$conf.int[2]
+}
+
+```
+
+```{r check correlation for height}
+#Bodylength wit Tail vs predicted Height from Human PTRS weights
+bodylength_w_tail <- pheno %>% dplyr::select(c(rat_rfid, bodylength_w_tail)) %>% na.omit()
+tempo <- pred_height[na.omit(match(bodylength_w_tail$rat_rfid, rownames(pred_height))), ]
+
+bodylength_w_tail_df <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n_genes_in_model = numeric(), conf.int.min = numeric(), conf.int.max = numeric())
+for(i in 1:ncol(tempo)){
+  bodylength_w_tail_df[i,1] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo[,i])$estimate
+  bodylength_w_tail_df[i,2] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo[,i])$p.value
+  bodylength_w_tail_df[i,3] <- paste("model", i, sep = "_")
+  bodylength_w_tail_df[i,4]<- n_genes_height[i,1]
+  bodylength_w_tail_df[i,5] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo[,i])$conf.int[1]
+  bodylength_w_tail_df[i,6] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo[,i])$conf.int[2]
+}
+
+
+#now for bodylength without tail vs predicted Height 
+bodylength_wo_tail <- pheno %>% dplyr::select(c(rat_rfid, bodylength_wo_tail)) %>% na.omit()
+tempo <- pred_height[na.omit(match(bodylength_wo_tail$rat_rfid, rownames(pred_height))), ]
+
+bodylength_wo_tail_df <- data.frame(estimate = numeric(), pvalue = numeric(),model = character(), n_genes_in_model = numeric(), conf.int.min = numeric(), conf.int.max = numeric())
+for(i in 1:ncol(tempo)){
+  bodylength_wo_tail_df[i,1] <- cor.test(bodylength_wo_tail$bodylength_wo_tail, tempo[,i])$estimate
+  bodylength_wo_tail_df[i,2] <- cor.test(bodylength_wo_tail$bodylength_wo_tail, tempo[,i])$p.value
+  bodylength_wo_tail_df[i,3] <- paste("model", i, sep = "_")
+  bodylength_wo_tail_df[i,4]<- n_genes_height[i,1]
+  bodylength_wo_tail_df[i,5] <- cor.test(bodylength_wo_tail$bodylength_wo_tail, tempo[,i])$conf.int[1]
+  bodylength_wo_tail_df[i,6] <- cor.test(bodylength_wo_tail$bodylength_wo_tail, tempo[,i])$conf.int[2]
+}
+
+#Tail-length vs predicted Height 
+taillength <- pheno %>% dplyr::select(c(rat_rfid, tail_length)) %>% na.omit()
+tempo <- pred_height[na.omit(match(taillength$rat_rfid, rownames(pred_height))), ]
+
+tail_length_df <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n_genes_in_model = numeric(), conf.int.min = numeric(), conf.int.max = numeric())
+for(i in 1:ncol(tempo)){
+  tail_length_df[i,1] <- cor.test(taillength$tail_length, tempo[,i])$estimate
+  tail_length_df[i,2] <- cor.test(taillength$tail_length, tempo[,i])$p.value
+  tail_length_df[i,3] <- paste("model", i, sep = "_")
+  tail_length_df[i,4]<- n_genes_height[i,1]
+  tail_length_df[i,5] <- cor.test(taillength$tail_length, tempo[,i])$conf.int[1]
+  tail_length_df[i,6] <- cor.test(taillength$tail_length, tempo[,i])$conf.int[2]
+}
+```
+
+# Plot Number of nonzero genes vs estimate in each model
+```{r}
+ggplot(tail_length_df, aes(n_genes_in_model, estimate)) + geom_point(color = "magenta", position="jitter") +geom_line(color = "magenta") + geom_errorbar(aes(ymin = conf.int.min, ymax = conf.int.max ), width=0.2,  color="gray") + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + ggtitle("Performance vs Number of Genes in Each Model for Tail length in Rats vs Predicted Height")
+
+ggplot(bodylength_w_tail_df, aes(n_genes_in_model, estimate)) + geom_point() +geom_line() + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + geom_errorbar(aes(ymin = conf.int.min, ymax = conf.int.max ), width=0.2,  color="gray") + ggtitle("Performance vs Number of Genes in Each Model for Bodylength with Tail in Rats vs Predicted Height")
+
+ggplot(bodylength_wo_tail_df, aes(n_genes_in_model, estimate)) + geom_point() +geom_line() + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + geom_errorbar(aes(ymin = conf.int.min, ymax = conf.int.max ), width=0.2,  color="gray")  + ggtitle("Performance vs Number of Genes in Each Model for Bodylength without Tail in Rats vs Predicted Height")
+
+ggplot(bmi_w_tail_df, aes(n_genes_in_model, estimate)) + geom_point() +geom_line() + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + geom_errorbar(aes(ymin = conf.int.min, ymax = conf.int.max ), width=0.2,  color="gray") + ggtitle("Performance vs Number of Genes in Each Model for BMI with Tail in Rats vs Predicted BMI")
+
+
+ggplot(bmi_wo_tail_df, aes(n_genes_in_model, estimate)) + geom_point() +geom_line() + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + geom_errorbar(aes(ymin = conf.int.min, ymax = conf.int.max ), width=0.2,  color="gray") + ggtitle("Performance vs Number of Genes in Each Model for BMI without Tail in Rats vs Predicted BMI")
+```
+
+

@@ -1,0 +1,175 @@
+---
+title: "Rat_PTRS_trained_in_Rats"
+author: "Natasha Santhanam"
+date: "11/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(data.table)
+library(readxl)
+library(qqman)
+library(arrow)
+library(RSQLite)
+library(glmnet)
+library(GenomicRanges)
+library(liftOver)
+"%&%" = function(a,b) paste(a,b,sep="")
+dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+```{r file dir, eval=FALSE}
+data.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/"
+orth.rats <- read_tsv(data.dir %&% "expression/ortholog_genes_rats_humans.tsv", col_names = TRUE)
+
+```
+
+This is is the exact same pipeline in Rat_PTRS_weights_Humans.Rmd; Here I just use weights that were trained with the overlap of genes in Rats and Humans,
+
+
+# Read in weights file and predicted expression 
+
+The weights file and expression need to be filtered for genes in common/ orthologs. I'll also remove the overlap of rats from the predicted file. Here the weights are trained with genes that overlap between rats and humans. 
+```{r read in weights and expr, eval=FALSE}
+weights <- read_tsv(data.dir %&% "PTRS_weights/elastic_net_ptrs_gtex_british.rat_genes_0.1.export_model/weights.height.tsv.gz")
+#weights <- read_tsv(data.dir %&% "PTRS_weights/elastic_net_ptrs_gtex_british.rat_genes_0.1.export_model/weights.bmi.tsv.gz")
+weights$gene_id <- sapply(strsplit(weights$gene_id, "\\."), `[`, 1)
+
+pred_expr <- read_tsv(data.dir %&% "prediXcan/rat_metabolic_Ac__predict.txt") %>% select(-c(FID))
+```
+
+Remove rats used in prediction training (66 rats)
+```{r filter expression for no overlap, eval=FASLE}
+all_rats <- read_tsv(data.dir %&% "MultiXcan/all_names.txt", col_names = TRUE)
+pred_expr <- pred_expr[-na.omit(match(all_rats$ID, pred_expr$IID)), ]
+```
+
+Filter for Genes with Human Ortholog
+```{r change gene name, eval=FALSE}
+#filter only for genes that have a human ortholog
+pred_expr <- pred_expr %>% select(c(IID, intersect(colnames(pred_expr), orth.rats$rnorvegicus_homolog_ensembl_gene) ))
+
+#change name to human ensembl id in humans
+colnames(pred_expr)[2:ncol(pred_expr)] <- orth.rats[match(colnames(pred_expr)[2:ncol(pred_expr)], orth.rats$rnorvegicus_homolog_ensembl_gene), 1] %>% .[["ensembl_gene_id"]]
+```
+
+```{r inner join all genes, eval=FASLE}
+#Do inner join of all genes in weight and expression files - 2,715 genes in common between the two
+rownames(weights) <- weights$gene_id
+weights <- weights[intersect(colnames(pred_expr), weights$gene_id), ]
+expr <- pred_expr[, intersect(colnames(pred_expr), weights$gene_id)]
+expr <- expr %>%  mutate(ID = pred_expr$IID, .before = "ENSG00000055211")
+```
+
+# Generate predicted values for Height using all models with only the training set 
+```{r generate predicted trait, eval=FALSE}
+fn_generate_trait = function(exp, weights)
+  {
+   nrats = length(exp$ID)
+   nmodels = ncol(weights) - 1
+   pred_height <- matrix(0, nrow = nrats, ncol = nmodels)
+   for(i in 1:nmodels) {
+     c1 <- as.matrix(weights[,i+1])
+     for(j in 1:nrats) {
+       df <- as.matrix(exp[j, 2:ncol(exp)])
+       pred_height[j,i] <- df %*% c1
+     }
+   }
+   rownames(pred_height) <- exp$ID
+   colnames(pred_height) <- colnames(weights)[2:ncol(weights)]
+}
+
+pred_height = fn_generate_trait(expr, weights)
+#pred_bmi = fn_generate_trait(expr, weights)
+```
+
+# Compare all values across different models to actual BMI and Height
+
+Read in observed traits in rats and filter for overlap
+```{r read in pred trait}
+pred_height <- readRDS(dir %&% "rat_pred_height_new_PTRS.RDS")
+pred_bmi <- readRDS(dir %&% "rat_pred_bmi_new_PTRS.RDS")
+
+all_rats <- read_tsv(dir %&% "all_names.txt", col_names = TRUE)
+
+pheno <- read_csv(dir %&% "processed_obesity_rat_Palmer_phenotypes.csv") %>% dplyr::select(c(rat_rfid, bmi_bodylength_w_tail, bmi_bodylength_wo_tail, bodylength_w_tail, bodylength_wo_tail, tail_length)) 
+pheno <- pheno %>% filter(!(rat_rfid  %in% all_rats$ID))
+```
+
+
+```{r check number of genes in each model}
+weights_bmi <- readRDS("/Users/natashasanthanam/Downloads/weights_bmi_new_PTRS.RDS") 
+weights_height <-  readRDS("/Users/natashasanthanam/Downloads/weights_height_new_PTRS.RDS")  %>% dplyr::select(-c(gene_id))
+
+n_genes_bmi = as.matrix(apply(weights_bmi, 2, function(x) sum(x != 0 )))
+n_genes_height = as.matrix(apply(weights_height, 2, function(x) sum(x != 0 )))
+```
+
+
+# Create Dataframes with the correlation coefficient between trait in rats and ones predicted using PTRS from Humans
+
+Using Predicted Height vs Bodylength(with and without tail) and tail length
+```{r check correlation for Height }
+bodylength_w_tail <- pheno %>% dplyr::select(c(rat_rfid, bodylength_w_tail)) %>% na.omit()
+tempo <- pred_height[na.omit(match(bodylength_w_tail$rat_rfid, rownames(pred_height))), ]
+
+bodylength_w_tail_comp <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n_genes_in_model = numeric())
+for(i in 1:ncol(tempo)){
+  bodylength_w_tail_comp[i,1] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo[,i])$estimate
+  bodylength_w_tail_comp[i,2] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo[,i])$p.value
+  bodylength_w_tail_comp[i,3] <- paste("model", i-1, sep = "_")
+  bodylength_w_tail_comp[i,4]<- n_genes_height[i,1]
+}
+
+
+#now for bodylength without tail vs predicted Height 
+bodylength_wo_tail <- pheno %>% dplyr::select(c(rat_rfid, bodylength_wo_tail)) %>% na.omit()
+tempo <- pred_height[na.omit(match(bodylength_wo_tail$rat_rfid, rownames(pred_height))), ]
+
+bodylength_wo_tail_comp <- data.frame(estimate = numeric(), pvalue = numeric(),model = character(), n_genes_in_model = numeric())
+for(i in 1:ncol(tempo)){
+  bodylength_wo_tail_comp[i,1] <- cor.test(bodylength_wo_tail$bodylength_wo_tail, tempo[,i])$estimate
+  bodylength_wo_tail_comp[i,2] <- cor.test(bodylength_wo_tail$bodylength_wo_tail, tempo[,i])$p.value
+  bodylength_wo_tail_comp[i,3] <- paste("model", i, sep = "_")
+  bodylength_wo_tail_comp[i,4]<- n_genes_height[i,1]
+}
+
+#Tail-length vs predicted Height 
+taillength <- pheno %>% dplyr::select(c(rat_rfid, tail_length)) %>% na.omit()
+tempo <- pred_height[na.omit(match(taillength$rat_rfid, rownames(pred_height))), ]
+
+tail_length_comp <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n_genes_in_model = numeric())
+for(i in 1:ncol(tempo)){
+  tail_length_comp[i,1] <- cor.test(taillength$tail_length, tempo[,i])$estimate
+  tail_length_comp[i,2] <- cor.test(taillength$tail_length, tempo[,i])$p.value
+  tail_length_comp[i,3] <- paste("model", i, sep = "_")
+  tail_length_comp[i,4]<- n_genes_height[i,1]
+}
+```
+
+```{r check corr with bmi}
+bmi_with_tail <- pheno %>% dplyr::select(c(rat_rfid, bmi_bodylength_w_tail)) %>% na.omit()
+tempo <- pred_bmi[na.omit(match(bmi_with_tail$rat_rfid, rownames(pred_bmi))), ]
+
+bmi_w_tail_comp <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n_genes_in_model = numeric())
+for(i in 1:ncol(tempo)){
+  bmi_w_tail_comp[i,1] <- cor.test(bmi_with_tail$bmi_bodylength_w_tail, tempo[,i])$estimate
+  bmi_w_tail_comp[i,2] <- cor.test(bmi_with_tail$bmi_bodylength_w_tail, tempo[,i])$p.value
+  bmi_w_tail_comp[i,3] <- paste("model", i, sep = "_")
+  bmi_w_tail_comp[i,4] <- n_genes_bmi[i,1]
+}
+
+
+bmi_without_tail <- pheno %>% dplyr::select(c(rat_rfid, bmi_bodylength_wo_tail)) %>% na.omit()
+tempo <- pred_bmi[na.omit(match(bmi_without_tail$rat_rfid, rownames(pred_bmi))), ]
+bmi_wo_tail_comp <- data.frame(estimate = numeric(), pvalue = numeric(),  model = character(), n_genes_in_model = numeric())
+for(i in 1:ncol(tempo)){
+  bmi_wo_tail_comp[i,1] <- cor.test(bmi_without_tail$bmi_bodylength_wo_tail, tempo[,i])$estimate
+  bmi_wo_tail_comp[i,2] <- cor.test(bmi_without_tail$bmi_bodylength_wo_tail, tempo[,i])$p.value
+  bmi_wo_tail_comp[i,3] <- paste("model", i, sep = "_")
+  bmi_wo_tail_comp[i,4] <- n_genes_bmi[i,1]
+}
+
+```
+

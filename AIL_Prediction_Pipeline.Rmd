@@ -1,0 +1,333 @@
+---
+title: "AIL_Prediction_Pipeline"
+author: "Natasha Santhanam"
+date: "5/26/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(devtools)
+library(broom)
+library(data.table)
+library(RSQLite)
+library(data.table)
+"%&%" = function(a,b) paste(a,b,sep="")
+data.dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+#Done in CRI
+
+```{r}
+box_dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/files_from_Palmer_Lab/"
+setwd("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/")
+```
+
+Gather Genotype, Gene epression data, snp annotation file and gtf (made with ensembl notation)
+
+```{r}
+geno <- read_tsv(box_dir %&% "ail.genos.dosage.gwasSNPs.txt", col_names = FALSE)
+gex <- read.table(box_dir %&% "strNormCounts.expr.txt")
+pheno <- read_tsv(box_dir %&% "ail.phenos.final.txt", col_names = TRUE)
+
+colnames(geno) = c("chr", "pos", "ref", "eff", pheno$id)
+geno$chr = as.numeric(substr(geno$chr, 4, str_length(geno$chr)))
+```
+
+Format snp annotation
+```{r}
+phyMap <- geno %>% select(c(chr, pos, ref, eff))
+phyMap <- cbind(snp <- paste(phyMap$chr, phyMap$pos, sep="."), phyMap, varID <- paste(phyMap$chr, phyMap$pos, phyMap$ref, phyMap$eff, sep="_"), rsid <- varID)
+
+colnames(phyMap) = c("snp", "chr", "pos", "refAllele", "effectAllele", "varID", "rsid") 
+rownames(phyMap) = phyMap$varID
+```
+
+Format gene annotation
+```{r}
+gtf <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/mice_ensembl_gtf.txt", col_names =TRUE)
+colnames(gtf) <- c("gene_name", "gene_id", "chr", "start", "end")
+gene_annotation <- gtf %>% select(c(chr, gene_id, gene_name, start, end))
+
+gene_annotation <- gene_annotation[!duplicated(gene_annotation$gene_name),]
+rownames(gene_annotation) = gene_annotation$gene_name
+```
+
+```{r}
+# Splitting the snp annotation file by chromosome
+s <- setNames(split(phyMap, phyMap$chr), paste0("snp_annot.chr", unique(phyMap$chr)))
+list2env(s, globalenv())
+```
+
+
+```{r}
+# writing the genotype file to a .txt file so that we can separate it by chromosome using our geneotype parse script.
+geno <- cbind(marker = paste(geno$chr, geno$pos, sep = "."), geno) 
+geno <- geno[ , !(names(geno) %in% c("ref", "eff"))]
+
+geno <- geno[,c("marker", "chr", "pos", intersect(colnames(geno)[4:ncol(geno)], rownames(gex)))]
+rownames(geno) = rownames(phyMap)
+write.table(geno, file = "genotype.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+```
+
+
+```{bash}
+#Splitting the genotype file by chromosome - run this from the rat_genomic_alaysis directory
+python rat-genomic-analysis/scripts/split_genotype_by_chr.py genotypes/genotype.txt genotypes/genotype
+```
+
+
+```{r}
+# Running inverse normalization on  gene expression
+invnorm = function(x) {
+  if(is.null(dim(x))) res = invnorm.vector(x) else
+  res=apply(x,2,invnorm.vector)
+  res
+}
+invnorm.vector = function(x) {yy = rank(x)/(length(x)+1); qnorm(yy)}
+
+
+gex = invnorm(gex)
+```
+
+```{r}
+# Writing the gene expression files to csv files to be used for PEER Factor analysis
+write.table(gex, file = 'gex.csv', sep = ",", col.names = TRUE, row.names = FALSE)
+```
+
+```{bash}
+# Now we are performing PEER factor analysis on each tissue choosing 7 factors
+/gpfs/data/im-lab/nas40t2/yanyul/softwares/peer/bin/peertool -f gex.csv -n 7 -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/peer_mice --has_header
+```
+
+Read in Peer Factors
+```{r}
+peer_factors= read.csv(file = "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/peer_mice/X.csv", header = FALSE)
+```
+
+```{r}
+# Manipulating the PEER factor files so we can append to covariate file
+rownames(peer_factors) = rownames(gex)
+colnames(peer_factors) = c('PF1', 'PF2', 'PF3', 'PF4', 'PF5', 'PF6', 'PF7')
+```
+
+```{r}
+#initializing matrices to be filled with t-stats, p_vals, and residuals of the regression of each gene vs. the covariates for each tissue. t-stat and p-val matrices are just for diagnostics
+# t_stats = matrix(nrow = 13, ncol = length(colnames(gex)))
+# p_vals = matrix(nrow = 13, ncol = length(colnames(gex)))
+expression = gex
+```
+
+```{r}
+# Regressing out the covariates and saving the residuals as the new expression for each tissue
+
+for (i in 1:length(colnames(gex))) {
+    fit = lm(gex[,i] ~  peer_factors$PF1 + peer_factors$PF2 + peer_factors$PF3 + peer_factors$PF4 + peer_factors$PF5 + peer_factors$PF6 + peer_factors$PF7)
+    expression[,i] <- fit$residuals
+}
+```
+
+```{r}
+# Saving the expression RDS objects to be used as arguments in the script
+saveRDS(as.matrix(expression), "mice_expression_transformed.RDS")
+```
+
+```{r}
+# Saving the SNP annotation RDS objects to be used as arguments in the script - too lazy to write a for loop 
+saveRDS(snp_annot.chr1, "snp_annot.chr1.RDS")
+saveRDS(snp_annot.chr2, "snp_annot.chr2.RDS")
+saveRDS(snp_annot.chr3, "snp_annot.chr3.RDS")
+saveRDS(snp_annot.chr4, "snp_annot.chr4.RDS")
+saveRDS(snp_annot.chr5, "snp_annot.chr5.RDS")
+saveRDS(snp_annot.chr6, "snp_annot.chr6.RDS")
+saveRDS(snp_annot.chr7, "snp_annot.chr7.RDS")
+saveRDS(snp_annot.chr8, "snp_annot.chr8.RDS")
+saveRDS(snp_annot.chr9, "snp_annot.chr9.RDS")
+saveRDS(snp_annot.chr10, "snp_annot.chr10.RDS")
+saveRDS(snp_annot.chr11, "snp_annot.chr11.RDS")
+saveRDS(snp_annot.chr12, "snp_annot.chr12.RDS")
+saveRDS(snp_annot.chr13, "snp_annot.chr13.RDS")
+saveRDS(snp_annot.chr14, "snp_annot.chr14.RDS")
+saveRDS(snp_annot.chr15, "snp_annot.chr15.RDS")
+saveRDS(snp_annot.chr16, "snp_annot.chr16.RDS")
+saveRDS(snp_annot.chr17, "snp_annot.chr17.RDS")
+saveRDS(snp_annot.chr18, "snp_annot.chr18.RDS")
+saveRDS(snp_annot.chr19, "snp_annot.chr19.RDS")
+saveRDS(snp_annot.chr20, "snp_annot.chr20.RDS")
+```
+
+```{r}
+saveRDS(gene_annotation, "gene_annotation.RDS")
+```
+
+
+```{bash}
+# Creating the meta data file for each tissue 
+python rat-genomic-analysis/scripts/create_meta_data.py --geno "genotypes/genotype.txt" --expr "mice_expression_transformed.RDS" --snpset "1KG" --rsid_label 1 --window 1000000 --out_prefix "Results/allMetaData/"
+```
+
+
+```{bash}
+# Running the model training script for each tissue/chromosome pair
+for i in {1..20}
+do
+  Rscript rat-genomic-analysis/scripts/create_model.R 'mice' $i .5 1000000
+done
+```
+
+
+```{bash}
+# Concatenating all of the results files for each tissue
+bash rat-genomic-analysis/scripts/make_all_results.sh 'mice' './Results/all_Results_Palmer_mice' 0.5 '1KG_snps'
+bash rat-genomic-analysis/scripts/make_all_betas.sh 'mice' './Results/all_betas_Palmer' 0.5 '1KG_snps'
+bash rat-genomic-analysis/scripts/make_all_logs.sh 'mice' './Results/all_logs_Palmer'
+bash rat-genomic-analysis/scripts/make_all_covariances.sh 'mice' './Results/all_covariances_Palmer' 0.5 '1KG_snps'
+```
+
+
+```{bash}
+# Putting these into sqllite databases
+python rat-genomic-analysis/scripts/make_sqlite_db.py --output "mice_Palmer_output_db.db" --results "./Results/all_Results_Palmer_mice" --construction "./Results/all_logs_Palmer" --betas "./Results/all_betas_Palmer" --meta "./Results/allMetaData/mice_Palmer.allMetaData.txt"
+```
+
+```{r}
+# Writing genotype files for each expression file to be used in PrediXcan args
+snpMap <- phyMap %>% select(c(snp, varID, refAllele, effectAllele))
+snpMap <- cbind(MAF = 0, snpMap)
+colnames(snpMap)[2] = "marker"
+geno_mice <- inner_join(snpMap, geno, by = "marker")
+geno_mice <- geno_mice %>% select(c(chr, varID, pos, refAllele, effectAllele, MAF, colnames(geno_mice)[8:ncol(geno_mice)]))
+write_tsv(geno_mice, "./genotypes/genotype_Palmer_predixcan.txt", col_names = FALSE)
+
+#run split command again to get genotype by chr
+```
+
+```{r}
+#Write models so that column names match what prediXcan is looking for
+filename <- "mice_Palmer_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+weights <- dbGetQuery(conn, 'select * from weights')
+dbDisconnect(conn)
+colnames(extra) = c("gene", "genename", "pred.perf.R2", "n.snps.in.model", "pred.perf.pval")
+extra <- cbind(extra, pred.perf.qval = NA)
+
+model_db = MODEL %&% "/mice_Palmer_output_db.db"
+conn <- dbConnect(RSQLite::SQLite(), model_db)
+dbWriteTable(conn, "weights", weights)
+dbWriteTable(conn, "extra", extra)
+```
+
+
+```{bash}
+#run prediXcan
+conda activate /gpfs/data/im-lab/nas40t2/natasha/envs/predixcan/
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/genotypes
+export MODEL=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline
+
+python $METAXCAN/Predict.py \
+--model_db_path $MODEL/mice_Palmer_output_predixcan_db.db \
+--text_genotypes  \
+ $GENO/geno_predixcan.chr1.txt \
+ $GENO/geno_predixcan.chr2.txt \
+ $GENO/geno_predixcan.chr3.txt \
+ $GENO/geno_predixcan.chr4.txt \
+ $GENO/geno_predixcan.chr5.txt \
+ $GENO/geno_predixcan.chr6.txt \
+ $GENO/geno_predixcan.chr7.txt \
+ $GENO/geno_predixcan.chr8.txt \
+ $GENO/geno_predixcan.chr9.txt \
+ $GENO/geno_predixcan.chr10.txt \
+ $GENO/geno_predixcan.chr11.txt \
+ $GENO/geno_predixcan.chr12.txt \
+ $GENO/geno_predixcan.chr13.txt \
+ $GENO/geno_predixcan.chr14.txt \
+ $GENO/geno_predixcan.chr15.txt \
+ $GENO/geno_predixcan.chr16.txt \
+ $GENO/geno_predixcan.chr17.txt \
+ $GENO/geno_predixcan.chr18.txt \
+ $GENO/geno_predixcan.chr19.txt \
+ $GENO/geno_predixcan.chr20.txt \
+--text_sample_ids $GENO/samples_Palmer_file \
+--prediction_output mice_Palmer__predict.txt  \
+--prediction_summary_output mice_Palmer__summary.txt \
+--throw
+```
+
+```{r}
+#match phenotype file to ids in predixcan results
+predict_res <- read_tsv("mice_Palmer__predict.txt", col_names = TRUE)
+pheno <- pheno %>% filter(id %in% predict_res$FID )
+write_tsv(pheno, box.dir %&% "ail.phenos.predixcan.txt", col_names = TRUE)
+```
+
+
+```{r}
+#run asssociation in prediXcan
+ PHENO = "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/files_from_Palmer_Lab/"
+ RESULTS = "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/assoc_files/"
+ METAXCAN = "/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software/"
+ EXPR = "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/"
+pheno <- read_tsv(PHENO %&% "ail.phenos.predixcan.txt", col_names = TRUE)
+
+for(i in 2:length(colnames(pheno))){
+trait <- colnames(pheno)[i]
+runLOC <- "python3 " %&% METAXCAN %&% "PrediXcanAssociation.py " %&% "--expression_file " %&% EXPR %&% "mice_Palmer__predict.txt --input_phenos_file " %&% PHENO %&% "ail.phenos.predixcan.cols.txt " %&% "--input_phenos_column " %&% i %&%  " --output " %&% RESULTS %&% "mice_Palmer__association_" %&% trait %&% "_.txt --verbosity 9 --throw"
+system(runLOC)
+}
+```
+
+
+```{r}
+#save assoc files as phenomearray
+pheno <- select_if(pheno, is.numeric)     
+
+Palmer_predict <- fread("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/mice_Palmer__predict.txt")
+
+tempo2 = pheno  %>% inner_join(Palmer_predict,by=c("id"="IID"))
+
+
+#don't include id and sex 
+npheno = ncol(pheno) - 2
+phenomearray = array(NA,c(4732, npheno, 4))
+phenolist = names(pheno)[-c(1:2)]
+genelist = names(tempo2)[-c(1:147)]
+pp = phenolist[1]
+gg = genelist[1]
+fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+## does batch have an effect on phenotypes
+
+
+imnames(phenomearray)[[1]] = genelist
+dimnames(phenomearray)[[2]] = phenolist
+dimnames(phenomearray)[[3]] = colnames(coef(fit))
+pcount = 1
+gcount = 1
+for(pp in phenolist) {
+  print(pp)
+  gcount = 1
+  for(gg in genelist) {
+    fit = summary( lm (tempo2[[pp]] ~ tempo2[[gg]], data=tempo2))
+    phenomearray[gcount, pcount, ] = coef(fit)[-1,]
+    gcount = gcount + 1
+  }
+  pcount = pcount + 1
+}
+
+saveRDS(phenomearray, "/gpfs/data/im-lab/nas40t2/natasha/Palmer_phenomearray.rds")
+```
+
+Significance p-value: 0.05/4732
+```{r}
+#look for significant associations
+Palmer_phenomearray <- readRDS(data.dir %&% "Palmer_phenomearray.rds")
+
+AIL <- as.data.frame(Palmer_phenomearray[,,4]) 
+genes_sig<- AIL %>% select(everything()) %>% filter_all(any_vars(. < 1.056636e-05))
+
+pheno_sig <- AIL[, apply(AIL, 2, function(x) any(x <= 1.056636e-05)), drop=TRUE] 
+```
+

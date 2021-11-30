@@ -1,0 +1,151 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(RSQLite)
+"%&%" = function(a,b) paste(a,b,sep="")
+dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GW_Ridge/perf/"
+#dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+```{r}
+source("/Users/natashasanthanam/Github/rat-genomic-analysis/GW_Ridge_Palmer_Rats.Rmd")
+```
+
+#read in predicted r2 for all genes for each parameter
+```{r}
+ac_1 <- read_tsv(dir %&% "working_TW_Ac_exp_10-foldCV_elasticNet_alpha1_1KG_snps.txt", col_names = TRUE)
+```
+
+Use for loop to make on document with a list of 50 genes from each parameter to graph ~ Done in CRI
+```{r}
+tempo <- ac_1 %>% select(c(gene, cor))
+ldf <- list() # creates a list
+listtsv <- dir(path = dir, pattern = "working_TW_Ac_exp_10-foldCV_elasticNet_alpha", full.names = TRUE) # creates the list of all the tsv files in the directory
+for (k in 1:(length(listtsv)-1)){
+ ldf[[k]] <- read_tsv( listtsv[k], col_names = TRUE)
+ fila <- as.data.frame(ldf[[k]]) %>% select(c(gene, cor)) 
+ tempo <- inner_join(tempo, fila, by = "gene")
+}
+
+colnames(tempo) <- c("gene", "1", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "0")
+
+tempo$Average = rowMeans(subset(tempo, select = -c(gene)))
+tempo <- tempo %>% filter(Average > 0.3)
+tempo <- tempo[sample(nrow(tempo), 20), ]
+
+#tempo <- read_tsv(dir %&% "rat_elasticNet_cor.txt", col_names = TRUE)
+```
+
+
+```{r}
+data_long <- tempo %>% dplyr::select(-c(Average)) %>%  pivot_longer(!gene, names_to = "value", values_to = "count")
+   
+a <- ggplot(data_long, aes(x = as.numeric(value) , y = count), group=gene) + geom_point(lwd=0.5,show_guide = FALSE,linetype=1) + aes(color = gene) + geom_line(lwd=0.5, show_guide = FALSE, linetype=1) +  xlab(expression(paste("elastic net mixing parameter (",alpha, ")"))) + ylab(expression(paste("10-fold cross-validation R"))) + theme_bw(base_size = 12) + coord_cartesian(ylim=c(0,0.8),xlim=c(-0.02,1.02))
+
+#generate elastic net mixing parameters for more genes with geom_smooth
+b <- ggplot(data_long, aes(x = as.numeric(value), y = count)) + geom_smooth(show_guide = FALSE, se=T, size = .2)  +  xlab(expression(paste("elastic net mixing parameter (",alpha, ")"))) + ylab(expression(paste("10-fold cross-validation R"))) + theme_bw(base_size = 12) + coord_cartesian(ylim=c(0,0.8),xlim=c(-0.02,1.02))
+```
+
+```{r try binning with heritability}
+# add PVE to data_long
+herit <- read_tsv(dir %&% "Ac_PVE_estimates.txt", col_names = FALSE)
+colnames(herit) <- c("gene", "PVE", "credible_set_1", "credible_set_2")
+data_long$herit <- herit[match(data_long$gene, herit$gene), 2]
+data_long <- data_long %>% mutate(PVE = herit$PVE) %>% dplyr::select(-c(herit))
+summary(data_long$herit)
+
+#create bins for heritability
+cuts <- cut(data_long$PVE , breaks = c(0.0236, 0.1023, 0.1473, 0.1941, 0.7415), labels = c("Low", "First", "Second", "High") )
+
+data_long <- data_long %>% mutate(bins = cuts)
+
+#plot across different heritability groups
+ggplot(data_long, aes(x = as.numeric(value) , y = count)) + geom_smooth(aes(group=bins)) + aes(color = bins) +  xlab(expression(paste("elastic net mixing parameter (",alpha, ")"))) + ylab(expression(paste("10-fold cross-validation R"))) + theme_bw(base_size = 12) + coord_cartesian(ylim=c(0,0.8),xlim=c(-0.02,1.02))
+```
+
+
+
+```{r more sparsity plots}
+tempo <- tempo %>% select(-c(Average))
+
+p1 = ggplot(tempo, aes(x = `0`, y = `0.1`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 0.1" ) +
+      xlab("cor for mixing paramter = 0")
+
+p2 = ggplot(tempo, aes(x = `0`, y = `0.2`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 0.2" ) +
+      xlab("cor for mixing paramter = 0")
+
+
+p3 = ggplot(tempo, aes(x = `0`, y = `0.3`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 0.3" ) +
+      xlab("cor for mixing paramter = 0")
+
+p4 = ggplot(tempo, aes(x = `0`, y = `0.4`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 0.4" ) +
+      xlab("cor for mixing paramter = 0")
+
+p5 = ggplot(tempo, aes(x = `0`, y = `0.5`)) + geom_hex(bins = 50)   +
+      geom_abline(slope = 1, intercept = 0, color = "darkgrey", size = 0.8) +
+      ylab("cor for mixing paramter = 0.5" ) +
+      xlab("cor for mixing paramter = 0")
+
+p6 = ggplot(tempo, aes(x = `0`, y = `0.6`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 0.6" ) +
+      xlab("cor for mixing paramter = 0")
+
+p7 = ggplot(tempo, aes(x = `0`, y = `0.7`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 0.7" ) +
+      xlab("cor for mixing paramter = 0")
+
+p8 = ggplot(tempo, aes(x = `0`, y = `0.8`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 0.8") +
+      xlab("cor for mixing paramter = 0")
+
+p9 = ggplot(tempo, aes(x = `0`, y = `0.9`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 0.9" )+
+      xlab("cor for mixing paramter = 0")
+
+p10 =ggplot(tempo, aes(x = `0`, y = `1`)) + geom_hex(bins = 50) + geom_smooth()  +
+      geom_abline(slope = 1, intercept = 0, color = "coral3") +
+      ylab("cor for mixing paramter = 1")  +
+      xlab("cor for mixing paramter = 0")
+
+gridExtra::grid.arrange(p1, p2, p3,p4, nrow=2, ncol=2)
+gridExtra::grid.arrange(p5,p6,p7,p8,p9,p10, nrow =3, ncol = 2)                       
+                        
+```
+
+#compare corr in rats to R2 and H2
+```{r read in files}
+rat_cor <- read_tsv(dir %&% "rat_elasticNet_cor.txt", col_names = TRUE)
+rat_R2 <- read_tsv(dir %&% "rat_elasticNet_R2.txt", col_names = TRUE)
+rat_herit <- read_tsv(dir %&% "Ac_h2_annot.txt", col_names = TRUE)
+```
+
+```{r}
+cor_Ec <- rat_cor %>% dplyr::select(c(gene, `0.5`)) %>% rename(cor = `0.5`)
+R2_Ec <- rat_R2 %>% dplyr::select(c(gene, `0.5`)) %>% rename(R2 = `0.5`)
+
+compare_cor_R2 <- inner_join(cor_Ec, R2_Ec, by = "gene")
+compare_cor_h2 <- inner_join(cor_Ec, rat_herit, by = "gene")
+compare_R2_h2 <- inner_join(R2_Ec, rat_herit, by = "gene")
+
+cor.test(compare_cor_R2$cor, compare_cor_R2$R2, method = "pearson")
+cor.test(compare_cor_h2$cor, compare_cor_h2$h2, method = "pearson")
+cor.test(compare_R2_h2$R2, compare_R2_h2$h2, method = "pearson")
+```
+  

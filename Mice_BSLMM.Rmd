@@ -1,0 +1,214 @@
+---
+title: "Mice_BSLMM"
+author: "Natasha Santhanam"
+date: "4/9/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(vroom)
+load("~/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/Data-From-Abe-Palmer-Lab/Rdata/genoGex.RData")
+"%&%" = function(a,b) paste(a,b,sep="")
+
+plink.dir <- "/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/psychENCODE/plink_files/"
+```
+
+
+```{r}
+pheno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/genotype_files/"
+bim.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/"
+#Read in bimbam file 
+bimbamfile <- bim.dir %&% "gt_dosages" ###get SNP position information###
+bimbam <- read_tsv(bimbamfile, col_names = TRUE)
+bimbam[,1] = substr(bimbam[,1], 4, str_length(bimbam[,1]))
+ensidlist <- colnames(mice_expression)
+gtf <- read_tsv(bim.dir %&% "mice_ensembl_gtf.txt", col_names = TRUE )
+```
+
+Make local GRMs for each gene ~ done in CRI
+```{r}
+setwd("/scratch/nsanthanam1")
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$external_gene_name),]
+    chr <- geneinfo[3]
+    c <- chr$chromosome_name
+    start <- geneinfo$start_position - 1e6 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$end_position + 1e6 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bimbam, bimbam[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,2]>=start & chrsnps[,2]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,3:ncol(cissnps)]    
+    write.table(snplist, file= ge.dir %&% "tmp.mice.geno" %&% gene, quote=F,col.names=F,row.names=F)
+    
+    geneexp <- cbind(mice_expression[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% gene, col.names=F, row.names = F, quote=F) #output pheno for gemma
+    runGEMMAgrm <- "gemma -g " %&%  ge.dir %&% "tmp.mice.geno" %&% gene %&% " -p " %&% pheno.dir %&% "tmp.pheno." %&%  gene  %&%  " -gk -o grm_mice_" %&% gene
+    system(runGEMMAgrm)
+}
+
+```
+
+
+Next we create a yaml script for badger to run bslmm
+```{bash, eval=FALSE}
+---
+definitions:
+
+  # command and template must always be specified.
+  command: gemma
+  template: /gpfs/data/im-lab/nas40t2/Github/badger/examples/PBS_example_template.jinja
+
+  copy_to_item: true
+
+  default_arguments:
+    job_memory: "4gb"
+    job_walltime: "6:00:00"
+    logs_folder: /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/logs
+    setup: "module load gcc/6.2.0 \n module load gemma/0.94 \n cd /scratch/nsanthanam1 "
+
+  # This specifies what the script does once an individual file is generated.
+  submission:
+    !PBSQueue
+      jobs_folder: /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/jobs
+      job_name_key: job_name # Jobs will be written to job_name.sh files with the generated job_name argument filled in.
+      fake_submission: true # Specifying this just writes the files and does not run a submission command.
+
+  constants:
+    GRM_dir: &GRM_DIR "/scratch/nsanthanam1/GRMs/"
+    pheno_file: &PHENO_FILE "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/phenotype_files/"
+    geno_pref: &GENO_PREF "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/genotype_files/"
+# There are a lot of different types of arguments, and only a few are shown here.
+arguments:
+
+  - !Scalar { name: argument_4, prefix: "-bslmm", value: 1 }
+  - !Scalar { name: argument_5, prefix: "-n", value: 1 }
+
+  - !FilesInFolder
+    name: argument_1
+    prefix: "-g"
+    folder: "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/genotype_files"
+    regexp_filter: "geno(.*)"
+    metadata_rules:
+      - !ExtractFromFileNameRegexpMetadata
+        paths: [ gene_name ]
+
+  - !ArgumentFromMetadata
+    name: argument_2
+    prefix: "-p"
+    prepend: *PHENO_FILE
+    format_rule: "tmp.pheno.{gene_name}"
+    sources: [ { path: gene_name, destination: gene_name }]
+    
+  - !ArgumentFromMetadata
+    name: argument_3
+    prefix: "-k"
+    prepend: *GRM_DIR
+    format_rule: "grm_mice_{gene_name}.cXX.txt"
+    sources: [ { path: gene_name, destination: gene_name }]
+  
+  - !ArgumentFromMetadata
+    name: argument_6
+    prefix: "-o"
+    format_rule: "mice_out_{gene_name}"
+    sources: [ { path: gene_name, destination: gene_name }]
+
+  - !ArgumentFromMetadata
+    name: job_name
+    format_rule: "gemma_sub_mice-{gene_name}"
+    sources: [ { path: gene_name, destination: gene_name }]
+```
+ 
+Run badger to generate the jobs for each gene; then submit batches of jobs at 1000 at a time 
+```{bash, eval = FALSE}
+python /gpfs/data/im-lab/nas40t2/natasha/bin/badger/src/badger.py \
+-yaml_configuration_file mice_gemma.yaml \
+-parsimony 9
+```
+
+Submit the jobs in batches
+```{bash, eval = false}
+for file in gemma_sub_mice-ENSMUSG0000009*.sh; do qsub $file; done
+```
+
+Generate the point estimate and credible set
+
+```{r}
+beta.select=function(quantile1,quantile2)
+{
+betaprior1=function(K,x,p)
+# suppose one is given a beta(K*m, K*(1-m)) prior 
+# where the pth quantile is given by x
+# function outputs the prior mean m
+{
+m.lo=0; m.hi=1; flag=0
+while(flag==0)
+{
+m0=(m.lo+m.hi)/2
+p0=pbeta(x,K*m0,K*(1-m0))
+if(p0<=p) m.hi=m0 else m.lo=m0
+if(abs(p0-p)<.0001) flag=1
+}
+return(m0)
+}
+
+p1=quantile1$p; x1=quantile1$x
+p2=quantile2$p; x2=quantile2$x
+
+logK=seq(-3,8,length=100); K=exp(logK)
+m=sapply(K,betaprior1,x1,p1)
+
+prob2=pbeta(x2,K*m, K*(1-m))
+ind=((prob2>0)&(prob2<1))
+app=approx(prob2[ind],logK[ind],p2)
+K0=exp(app$y)
+m0=betaprior1(K0,x1,p1)
+
+return(round(K0*c(m0,(1-m0)),2))
+}
+```
+
+Calculate Posterior Probability for PVG/PVE 
+
+Find point estimate and 95% credible interval in CRI for PVE
+
+```{r, eval=FALSE}
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/output"
+files <- list.files(path = ge.dir, pattern = ".hyp.txt", full.names = TRUE)
+```
+
+```{r, eval=FALSE}
+PVE_df <- as.data.frame(matrix(NA, 0, 4)) 
+
+for(i in 1:length(files)){
+  gene <- sapply(strsplit(sapply(strsplit(files[i], "_"), `[`, 3), "\\."), `[`, 1)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pve, 0.1)
+  q2 <- quantile(df$pve, 0.9)
+  quantile1=list(p=.1 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PVE_df[i, 1] <- gene
+  PVE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PVE_df[i, 3] <- credible_set[1]
+  PVE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PVE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GEMMA/mice_PVE_estimates.txt", col_names = FALSE )
+```
+
+
+ 
+ 
+ 
+ 
+

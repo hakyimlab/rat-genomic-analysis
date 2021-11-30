@@ -1,0 +1,58 @@
+---
+title: "badger"
+author: "natashasanthanam"
+date: "2020-12-07"
+output: workflowr::wflow_html
+editor_options:
+  chunk_output_type: console
+---
+
+Badger script to run in CRI
+
+```{bash, eval=FALSE}
+---
+definitions:
+
+  # command and template must always be specified.
+  command: "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/rat-genomic-analysis/scripts/create_model.R "
+  template: "/gpfs/data/im-lab/nas40t2/Github/badger/examples/PBS_example_template.jinja"
+
+  copy_to_item: true
+
+  default_arguments:
+    job_memory: "4gb"
+    job_walltime: "0:1:00"
+    logs_folder: /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/rat-genomic-analysis/logs
+    setup: "module load gcc/6.2.0 \n module load R"
+
+  # This specifies what the script does once an individual file is generated.
+  submission:
+    !PBSQueue
+      jobs_folder: /gpfs/data/im-lab/nas40t2/natasha/predixcan/association_jobs
+      job_name_key: job_name # Jobs will be written to job_name.sh files with the generated job_name argument filled in.
+      fake_submission: false # Specifying this just writes the files and does not run a submission command.
+
+  # You can use YAML's built-in & and * things to make everything more neat
+  constants:
+    expression_dir: &EXPR_DIR "/gpfs/data/im-lab/nas40t2/natasha/predixcan/pyschencode_hg19__predict_abrv.txt"
+    pheno_file: &PHENO_FILE "/gpfs/data/im-lab/nas40t2/natasha/predixcan/pheno_predixcan.txt" 
+    output_pref: &OUTPUT_PREF "/gpfs/data/im-lab/nas40t2/natasha/predixcan/associations/"
+    
+    
+
+# There are a lot of different types of arguments, and only a few are shown here.
+arguments:
+
+  - !Scalar { name: argument_1,  value: "Ac" }
+  - !Scalar { name: argument_3,  value: 0.5 }
+  - !Scalar { name: argument_4,  value: 1000000 }
+
+  - !Range
+    name: argument_2
+    start: 1
+    end: 20
+    metadata_rules: [ !SaveValueInMetadata { path: chr }]
+
+```
+
+

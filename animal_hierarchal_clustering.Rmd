@@ -1,0 +1,78 @@
+---
+title: "Animal_Hierarchal_Clustering"
+author: "Natasha Santhanam"
+date: "4/5/2021"
+output: html_document
+---
+
+## Here we look at different methods for Cluster Analysis of Reaction IDs in our phenotype matrix
+
+```{r}
+library(tidyverse)
+library(workflowr)
+library(glue)
+library(factoextra)
+library(NbClust)
+library(cluster)    
+library(ggfortify)
+"%&%" = function(a,b) paste(a,b,sep="")
+dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+
+all_animals <- read_tsv(dir %&% "all_animals_h2.txt", col_names = TRUE)
+```
+
+
+
+First I'll use the Factoextra package in R to determine what is the appropriate number of clusters. 
+
+```{r}
+cluster_matrix <- all_animals[,-1]
+cluster_matrix <- scale(cluster_matrix)
+
+#elbow method
+fviz_nbclust(cluster_matrix, kmeans, method = "wss") +
+    geom_vline(xintercept = 4, linetype = 2)+
+  labs(subtitle = "Elbow method")
+
+#It'll definitely be 4 since we have 4 species but still good to check
+```
+
+
+After determining the best k, we can create a new fit
+```{r}
+fit <- kmeans(cluster_matrix, 4) # 4 cluster solution
+# get cluster means 
+aggregate(cluster_matrix,by=list(fit$cluster),FUN=mean)
+# append cluster assignment
+cluster_matrix_k <- data.frame(cluster_matrix, fit$cluster)
+
+k2 <- kmeans(cluster_matrix, centers = 4, nstart = 25)
+str(k2)
+fviz_cluster(k2, data = cluster_matrix)
+
+```
+
+Hierarchical Agglomerative # Ward Hierarchical Clustering
+```{r}
+d <- dist(cluster_matrix, method = "euclidean") # distance matrix
+fit <- hclust(d, method="ward") 
+plot(fit) # display dendogram
+groups <- cutree(fit, k=4) # cut tree into 4clusters
+# draw dendogram with red borders around the 4 clusters 
+rect.hclust(fit, k=4, border="red")
+```
+
+Visualize Distance Matrix between Reaction IDs
+```{r}
+
+fviz_cluster(list(data = cluster_matrix_k, cluster = cluster_matrix_k$fit.cluster), palette = "Set2", ggtheme = theme_minimal())
+
+```
+DO PCA Component Analysis with all species
+```{r}
+h2_matrix <- as.matrix(cbind(species = c(1, 2, 3, 4),h2_matrix))
+
+pca_res <- prcomp(h2_matrix, scale. = TRUE)
+autoplot(pca_res, data = h2_matrix, colour = 'species', label = TRUE, label.size = 0.5)
+```
+

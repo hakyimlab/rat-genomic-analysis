@@ -1,0 +1,90 @@
+---
+title: "species_r2_comparison"
+author: "Natasha Santhanam"
+date: "5/28/2021"
+output: html_document
+---
+
+# Load Libraries
+```{r}
+suppressPackageStartupMessages(library(RSQLite))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(FactoMineR))
+suppressPackageStartupMessages(library(factoextra))
+suppressPackageStartupMessages(library(cluster))
+suppressPackageStartupMessages(library(corrplot))
+
+
+"%&%" = function(a,b) paste(a,b,sep="")
+data.dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+box.dir <- "/Users/natashasanthanam/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/Rat-Genomics/Tyson-PalmerLab_PredictDB_Results/sql/"
+```
+
+#Read in predictability from humans (psychENCODE)/mice/rats
+
+```{r}
+#mice r2 from Palmer Lab (str tissue)
+mice_r2 <- read_tsv(data.dir %&% "all_Results_mice", col_names = TRUE)
+```
+
+```{r}
+#rat r2 using Ac Tissue
+filename <- box.dir %&% "Ac_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+rat_r2 <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+```{r}
+#human r2 using psychENCODE hg19 models
+filename <- "/Users/natashasanthanam/Box/imlab-data/Within-Lab-Sharing/Sabrina-Data/psychencode/psychencode_hg19_annotR2.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+human_r2 <- dbGetQuery(conn, 'select * from extra')
+dbDisconnect(conn)
+```
+
+
+```{r}
+#make data frame with all values
+mice_rat <- inner_join(mice_r2, rat_r2, by = "genename")
+mice_rat$genename <- toupper(mice_rat$genename)
+all_r2 <- inner_join(mice_rat, human_r2, by = "genename")
+all_r2 <- all_r2[,c(9,7,11,17)] 
+colnames(all_r2) = c("gene", "mice.r2", "rat.r2", "human.r2")
+```
+
+```{r}
+#figure of clustering
+cor.test(all_r2$mice.r2, all_r2$rat.r2)
+cor.test(all_r2$rat.r2, all_r2$human.r2)
+cor.test(all_r2$mice.r2, all_r2$human.r2)
+M<-cor(all_r2[,-c(1)])
+```
+
+```{r}
+set.seed(1234)
+r2_matrix <- all_r2[,-c(1)]
+
+fit <- kmeans(r2_matrix, 3)
+
+# Cluster Plot against 1st 2 principal components
+
+# vary parameters for most readable graph
+clusplot(r2_matrix, fit$cluster, color=TRUE, shade=TRUE, 
+   labels=2, lines=0)
+
+#Kmeans plot
+fviz_cluster(list(data = r2_matrix, cluster = fit$cluster), palette = "Set2", ggtheme = theme_minimal())
+corrplot(M, method = "number")
+```
+
+
+
+
+

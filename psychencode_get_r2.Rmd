@@ -1,0 +1,125 @@
+---
+title: "psychencode_get_r2"
+author: "Natasha Santhanam"
+date: "5/27/2021"
+output: html_document
+---
+
+# Load Libraries
+Run in R:
+```{r}
+suppressPackageStartupMessages(library(RSQLite))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(biomaRt))
+"%&%" = function(a,b) paste(a,b,sep="")
+```
+
+```{bash, eval=FALSE}
+cd $DATA
+mkdir PEC_TWAS_weights
+cd PEC_TWAS_weights
+wget "http://resource.psychencode.org/Datasets/Derived/PEC_TWAS_weights.tar.gz"
+tar xvf PEC_TWAS_weights.tar.gz
+```
+
+
+# Definitions
+```{r}
+PRE="/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/psychENCODE_r2/"
+DATA = PRE %&% "PEC_TWAS_weights/"
+fila.dir <- "/Users/natashasanthanam/Box/imlab-data/Within-Lab-Sharing/Sabrina-Data/psychencode/"
+```
+
+This script is to copy and paste the rsq data from the PEC_TWAS_weights.tar.gz files into a matrix
+```{r read r2 files into mat, eval=FALSE}
+filelist <- list.files(DATA)
+filelist <- filelist[substr(filelist,1,4)=="ENSG"]
+file=filelist[1]
+load(DATA %&% file)
+ngenes <- length(filelist)
+R2_mat <- matrix(NA, ngenes, 2)
+genelist <- substr(filelist, 1, 15)
+rownames(R2_mat) <- genelist
+colnames(R2_mat) <- colnames(cv.performance)
+for (file in filelist){
+  load(DATA %&% file)
+  genename <- substr(file, 1, 15)
+  R2_mat[genename, 1] <- cv.performance["rsq", 5]
+  R2_mat[genename, 2] <- cv.performance["pval", 5]
+}
+#select the elastic net r2
+psychencode_R2 <- cbind(gene = rownames(R2_mat), R2_mat)
+colnames(psychencode_R2) = c("gene", "pred.perf.R2", "pred.perf.pval")
+saveRDS(psychencode_R2, "R2_mat.RDS")
+```
+
+#Generate sql database with R2 from above
+
+#Use Weight table from what Sabrina generated (since we are only changing extra table)
+```{r}
+filename <- fila.dir %&% "psychencode.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+weights <- dbGetQuery(conn, 'select * from weights')
+dbDisconnect(conn)
+```
+
+
+
+# Make Extra Table 
+Generate number of snps for each gene from the weights table. For now, include blank columns to match PrediXcan format (gene, genename, n.snps.in.model, pred.perf.R2, pred.perf.pval, pred.perf.qval)
+
+```{r, eval=FALSE}
+extra <- weights %>% group_by(gene) %>% summarise(n.snps.in.model = n())
+R2.mat <- readRDS(data.dir %&% "R2_mat.RDS")
+R2.mat <- as.data.frame(R2.mat)
+
+extra <- inner_join(extra, R2.mat, by ="gene")
+```
+
+add gene name
+```{r}
+ensembl <- useEnsembl(biomart = "genes")
+datasets <- listDatasets(ensembl)
+ensembl <- useEnsembl(biomart = "ensembl", 
+                   dataset = "hsapiens_gene_ensembl", 
+                   mirror = "uswest")
+
+genes <-  as.data.frame(extra$gene)
+
+gene_IDs <- getBM(attributes= c('external_gene_name', 'ensembl_gene_id'), 
+      filters = '', 
+      values = genes, 
+      mart = ensembl)
+
+colnames(extra)[1] = "ensembl_gene_id"
+extra <- left_join(extra, gene_IDs, by = "ensembl_gene_id")
+
+colnames(extra) = c("gene", "n.snps.in.model", "pred.perf.R2", "pred.perf.pval", "genename")
+extra$pred.perf.qval <- NA
+extra <- extra[c(1, 5, 2, 3, 4, 6)]
+```
+
+
+# Write to SQLite Database
+Create database connection, and write the weights and extra tables to database.
+```{r, eval=FALSE}
+model_db = MODEL %&% "/psychencode_hg19_annotR2.db"
+conn <- dbConnect(RSQLite::SQLite(), model_db)
+dbWriteTable(conn, "weights", weights)
+dbWriteTable(conn, "extra", extra)
+```
+
+To double check, confirm there is a weights and extra table, and show their contents.
+```{r, eval=FALSE}
+dbListTables(conn)
+dbGetQuery(conn, 'SELECT * FROM weights') %>% head
+dbGetQuery(conn, 'SELECT * FROM extra') %>% head
+```
+
+Lastly, disconnect from database connection
+```{r, eval=FALSE}
+dbDisconnect(conn)
+```

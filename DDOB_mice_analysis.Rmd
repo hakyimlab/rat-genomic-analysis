@@ -1,0 +1,142 @@
+---
+title: "DDOB_mice_analysis"
+author: "Natasha Santhanam"
+date: "5/25/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(devtools)
+library(broom)
+library(data.table)
+"%&%" = function(a,b) paste(a,b,sep="")
+data.dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+box.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/DBOB_data/"
+```
+
+```{r}
+#read in genotype and phenotype information
+ped <- read_tsv(box.dir %&% "mice_pancreas.ped", col_names = FALSE)
+gex <- read.table(box.dir %&% "Attie_232_Attie_DO_Islets__expr_norm.txt" )
+```
+
+done in cri
+```{r}
+#pca analysis with cis-GRM
+grm.dir <- "/scratch/nsanthanam1/DOB_data/cis_GRM/"
+pca.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/pca_analysis/"
+files <- list.files(path = grm.dir, pattern = ".grm.id", full.names = TRUE)
+for(i in 1:length(files)){
+	ensid <- sapply(strsplit(sapply(strsplit(files[i],"/"), `[`, 7),"\\."), `[`, 1)
+	#output expression pheno for gcta
+	runLOC <- "gcta --grm " %&% grm.dir %&% ensid %&% " --pca 20 --out " %&% pca.dir %&% "pca_" %&% ensid
+	system(runLOC)
+}
+
+#distribution of eigenvalues
+pca.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/pca_analysis/"
+files <- list.files(path = pca.dir, pattern = ".eigenval", full.names = TRUE)
+for(i in 1:10){
+fila = read_tsv(files[i], col_names = FALSE)
+summary(fila)
+}
+```
+
+```{r}
+#grm and ld plot comparison between mice and rats
+rat_extract <- rat_bimbam %>% filter(V3 %in% cissnps$V2)
+rat_matrix <- t(rat_extract[,6:ncol(rat_extract)])
+#correlation plot
+cor_rat_geno <- cor(rat_matrix)
+#grm plot
+saveRDS(cor(t(rat_matrix)), box_dir %&% "rat_matrix_correlation_grm.RDS")
+
+#corr plot for Narf in Rats
+rat_matrix_corr_56_grm <- readRDS("~/Github/rat-genomic-analysis/data/rat_matrix_corr_56_grm.RDS")
+image((rat_matrix_corr_56_grm)^2)
+
+#grm plot for Narf in Rats
+rat_matrix_correlation_56_grm <- readRDS("~/Github/rat-genomic-analysis/data/rat_matrix_corr_56_grm.RDS")
+image(rat_matrix_correlation_56_grm)
+
+#corr plot for Cav2 in Rats
+correlation_matrix_58_rat <- readRDS("~/Github/rat-genomic-analysis/data/correlation_matrix_58_rat.RDS")
+image((correlation_matrix_58_rat)^2)
+
+#grm plot for Cav2 in Rats
+rat_matrix_correlation_grm_58 <- readRDS("~/Github/rat-genomic-analysis/data/rat_matrix_correlation_grm_58.RDS")
+image(rat_matrix_correlation_grm_58)
+```
+
+done in cri
+```{r}
+#subset mice data to match rat data 
+mice_ids <- sample(ped$X1, 80, replace =)
+mice_abr <- ped %>% filter(X1 %in% mice_ids)
+write_tsv(mice_abr, box.dir %&% "mice_pancreas_sample_80.ped", col_names = FALSE)
+```
+
+```{bash}
+#remake plink files with small sample size
+plink --file mice_pancreas_sample_80 --make-bed --missing-code NA  --out mice_sample_80
+```
+
+
+```{r}
+#script for cis heritability
+gt.dir <- "/scratch/nsanthanam1/DOB_data/snp_lists/"
+grm.dir <- "/scratch/nsanthanam1/DOB_data/sub_GRM/"
+h2.dir <- "/scratch/nsanthanam1/DOB_data/sub_h2/"
+pheno.dir <- "/scratch/nsanthanam1/DOB_data/phenotype_files/"
+mice_pheno <- read_tsv(box.dir %&% "mice_pancreas_sample_pheno.txt", col_names = TRUE)
+
+ensidlist <- colnames(mice_pheno)[3:ncol(mice_pheno)]
+bim <- read.table(box.dir %&% "mice_sample.bim")
+gtf <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/mice_pancreas_gtf.txt", col_names =TRUE)
+
+#Make local GRMs for each gene
+for(i in 2:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$gene_id),]
+    chr <- geneinfo[1]
+    c <- chr$chr
+    start <- geneinfo$start - 1e6 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$end + 1e6 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bim,bim[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,4]>=start & chrsnps[,4]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,2]    
+    write.table(snplist, file= gt.dir %&% "mice.sample.SNPlist",quote=F,col.names=F,row.names=F)
+    runGCTAgrm <- "gcta --bfile " %&%  box.dir %&% "mice_sample --make-grm-bin --extract " %&% gt.dir %&% "mice.sample.SNPlist" %&% " --out " %&% grm.dir %&%  gene
+    system(runGCTAgrm)
+}
+```
+
+
+```{r}
+files <- list.files(path = grm.dir, pattern = ".grm.id", full.names = TRUE)
+for(i in  18218:length(files)){
+	cat(i,"of",length(files),"\n")
+	ensid <- sapply(strsplit(sapply(strsplit(files[i],"/"), `[`, 7),"\\."), `[`, 1)
+	#output expression pheno for gcta
+	geneexp <- cbind(mice_pheno$FID, mice_pheno$IID, mice_pheno[,i+2])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% ensid, col.names=F, row.names = F, quote=F) #output pheno for gcta
+	## Y ~ localGRM
+	runLOC <- "gcta --grm " %&% grm.dir %&% ensid %&% " --reml --pheno " %&% pheno.dir %&% "tmp.pheno." %&% ensid %&% " --out " %&% h2.dir %&% "tmp." %&% ensid
+	system(runLOC)
+}
+```
+
+```{r}
+#check cis-heritability with sampling to 80 
+sub_h2 <- read_tsv(data.dir %&% "DOB_sub_80_h2.txt", col_names = TRUE)
+mice_r2 <- read_tsv(data.dir %&% "mice_predicatibility.txt", col_names =TRUE)
+```
+
+```{r}
+sub_tempo <- inner_join(sub_h2, mice_r2, by = "gene")
+cor.test(sub_tempo$H2, sub_tempo$pred.perf.R2, method = "spearman")
+ggplot(sub_tempo, aes(H2, pred.perf.R2)) + geom_point() + geom_abline()
+```
+

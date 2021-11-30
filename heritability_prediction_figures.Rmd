@@ -1,0 +1,248 @@
+---
+title: "Heritability_Prediction_figures"
+author: "Natasha Santhanam"
+date: "2/26/2021"
+output: html_document
+---
+
+#Load modules
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(RSQLite)
+library(glue)
+library(ggpubr)
+```
+
+
+## Plot the heritability estimate
+```{r}
+theme_set(theme_bw(base_size = 8))
+Data <- "/Users/natashasanthanam/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/Rat-Genomics/Tyson-PalmerLab_PredictDB_Results/sql"
+```
+
+
+```{r}
+filename <- glue('{Data}/Ac_output_db.db')
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+Functions
+```{r}
+load_herit <- function(df){
+  df$CI_width <- df$SE * 1.96
+  df <- df[order(df$H2),]
+  df$index <- 1:nrow(df)
+  return(df)
+}
+
+```
+
+Plot the Graph
+```{r}
+herit_Ac <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Ac_h2.txt", col_names = FALSE)
+colnames(herit_Ac) <- c("gene", "H2", "SE")
+herit_Ac$gene <- substr(herit_Ac$gene,5, 22)
+herit_Ac <- inner_join(herit_Ac, extra, by = "gene")
+
+A_df_Ac <- load_herit(herit_Ac)
+plt_1 <- (ggplot(data = A_df_Ac, aes(x = index))
+          + geom_ribbon(aes(ymax = H2 + CI_width, ymin = H2 - CI_width),
+                         alpha = 0.25)
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = H2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "Ac")
+          + ylim(-0.5,1)
+          + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.08943895", size = 2)
+          + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.08507938", size = 2))
+plt_1
+
+  ggplot(herit_Ac, aes(H2, pred.perf.R2)) + geom_point() + geom_abline()
+  cor.test(herit_Ac$H2, herit_Ac$pred.perf.R2, method = "spearman")
+  
+  ggplot(herit_Ac, aes(H2, pred.perf.R2)) + geom_hex(size=0.2)
+  
+  herit_Ac %>% filter(H2 < 0.1 & pred.perf.R2 < 0.1) %>% ggplot(aes(H2, pred.perf.R2)) + geom_hex(size=0.2)
+```
+
+#Generate the Same Graphs for Il, Pl, Lh, Vo
+
+Il
+
+```{r}
+filename <- glue('{Data}/Il_output_db.db')
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+
+```{r}
+herit_Il <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Il_h2.txt", col_names = FALSE)
+colnames(herit_Il) <- c("gene", "H2", "SE")
+herit_Il$gene <- substr(herit_Il$gene,5, 22)
+herit_Il <- inner_join(herit_Il, extra, by = "gene")
+
+A_df_Il <- load_herit(herit_Il)
+plt_2 <- (ggplot(data = A_df_Il, aes(x = index))
+          + geom_ribbon(aes(ymax = H2 + CI_width, ymin = H2 - CI_width),
+                         alpha = 0.25)
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = H2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "Il")
+          + ylim(-0.5, 1)
+          + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.0882758", size = 2)
+          + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.08875327", size = 2))
+plt_2
+```
+
+Pl
+
+```{r}
+filename <- glue('{Data}/Pl_output_db.db')
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+```{r}
+herit_Pl <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Pl_h2.txt", col_names = FALSE)
+colnames(herit_Pl) <- c("gene", "H2", "SE")
+herit_Pl$gene <- substr(herit_Pl$gene,5, 22)
+herit_Pl <- inner_join(herit_Pl, extra, by = "gene")
+
+A_df_Pl <- load_herit(herit_Pl)
+plt_3 <- (ggplot(data = A_df_Pl, aes(x = index))
+          + geom_ribbon(aes(ymax = H2 + CI_width, ymin = H2 - CI_width),
+                         alpha = 0.25)
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = H2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "Pl")
+          + ylim(-0.5, 1)
+          + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.09278906", size = 2)
+          + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.09333106", size = 2))
+plt_3
+```
+
+Lh
+
+```{r}
+filename <- glue('{Data}/Lh_output_db.db')
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+```{r}
+herit_Lh <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Lh_h2.txt", col_names = FALSE)
+colnames(herit_Lh) <- c("gene", "H2", "SE")
+herit_Lh$gene <- substr(herit_Lh$gene,5, 22)
+herit_Lh <- inner_join(herit_Lh, extra, by = "gene")
+
+A_df_Lh <- load_herit(herit_Lh)
+plt_4 <- (ggplot(data = A_df_Lh, aes(x = index))
+          + geom_ribbon(aes(ymax = H2 + CI_width, ymin = H2 - CI_width),
+                         alpha = 0.25)
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = H2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "Lh")
+          + ylim(-0.5, 1)
+          + annotate("text", x = 1200, y = 0.9, label = "Mean h2 = 0.07507749", size = 2)
+          + annotate("text", x = 1200, y = 0.8, label = "Mean r2 = 0.0777474", size = 2))
+plt_4
+```
+
+Vo
+
+```{r}
+filename <- glue('{Data}/Vo_output_db.db')
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+```{r}
+herit_Vo <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Vo_h2.txt", col_names = FALSE)
+colnames(herit_Vo) <- c("gene", "H2", "SE")
+herit_Vo$gene <- substr(herit_Vo$gene,5, 22)
+herit_Vo <- inner_join(herit_Vo, extra, by = "gene")
+
+A_df_Vo <- load_herit(herit_Vo)
+plt_5 <- (ggplot(data = A_df_Vo, aes(x = index))
+          + geom_ribbon(aes(ymax = H2 + CI_width, ymin = H2 - CI_width),
+                         alpha = 0.25)
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = H2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "Vo")
+          + ylim(-0.5,1)
+          + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.08929209", size = 2)
+          + annotate("text", x = 1200, y = 0.8, label = "Mean r2 = 0.09132985", size = 2))
+plt_5
+ggarrange(plt_1, plt_2, plt_3, plt_4, plt_5 , 
+          ncol = 3, nrow = 2)
+
+```
+
+```{r}
+cor.test(A_df_Ac$H2, A_df_Ac$pred.perf.R2)
+cor.test(A_df_Il$H2, A_df_Il$pred.perf.R2)
+cor.test(A_df_Pl$H2, A_df_Pl$pred.perf.R2)
+cor.test(A_df_Lh$H2, A_df_Lh$pred.perf.R2)
+cor.test(A_df_Vo$H2, A_df_Vo$pred.perf.R2)
+```
+
+Check Correlation between all Tissues
+```{r}
+filelist <- list(herit_Ac, herit_Il, herit_Lh, herit_Pl, herit_Vo)
+tempo <- data.frame(gene = character())
+
+for(fila in filelist) {
+  tempo <- full_join(tempo, fila, by = "gene")
+}
+
+colnames(tempo) <- c("gene", "Ac", "SE_Ac", "Il", "SE_Il", "Lh", "SE_Lh", "Pl", "SE_Pl", "Vo","SE_Vo")
+rownames(tempo) <- tempo$gene
+
+tempo <- tempo %>% select(c(Ac, Il, Lh, Pl, Vo))
+
+cor.matrix <- matrix(c(1, 0.5323318, 0.4835978, 0.5430501, 0.5160415, 0.5323318, 1, 0.5050662, 0.7134937, 0.6345174, 0.4835978, 0.5050662, 1, 0.5041737, 0.485144, 0.5430501, 0.7134937, 0.5041737, 1, 0.6501275, 0.5160415, 0.6345174, 0.485144,  0.6501275, 1), nrow = 5, ncol=5)
+
+rownames(cor.matrix) <- c("Ac", "Il", "Lh", "Pl", "Vo")
+colnames(cor.matrix) <- c("Ac", "Il", "Lh", "Pl", "Vo")
+
+
+pairs(tempo)
+```
+

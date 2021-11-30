@@ -1,0 +1,209 @@
+---
+title: "baboon_comparison_figures"
+author: "Natasha Santhanam"
+date: "3/17/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(RSQLite)
+library(biomaRt)
+library(ggpubr)
+"%&%" = function(a,b) paste(a,b,sep="")
+
+theme_set(theme_bw(base_size = 5))
+Data <- "/Users/natashasanthanam/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/Rat-Genomics/Tyson-PalmerLab_PredictDB_Results/sql"
+dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+#Read in baboon data
+```{r}
+babboon <- read.table(dir %&% "baboon_heritability_estimates.txt")
+```
+
+#Add ensembl ids to baboon genes
+```{r}
+listEnsembl()
+ensembl <- useEnsembl(biomart = "genes")
+datasets <- listDatasets(ensembl)
+ensembl <- useEnsembl(biomart = "ensembl", 
+                   dataset = "rnorvegicus_gene_ensembl", 
+                   mirror = "asia")
+
+babboon$V1 <- str_to_title(tolower(babboon$V1))
+genes <-  as.data.frame(babboon$V1)
+
+gene_IDs <- getBM(attributes= c('external_gene_name', 'ensembl_gene_id'), 
+      filters = '', 
+      values = genes, 
+      mart = ensembl)
+
+colnames(babboon) <- c("external_gene_name", "h2")
+baboon_annot <- left_join(babboon, gene_IDs, by = "external_gene_name")
+
+#2759 genes do not have ensemble ids from biomart
+sapply(baboon_annot, function(x) sum(is.na(x)))
+
+#only include genes that have ensembl ids
+baboon_annot <- baboon_annot %>% filter(is.na(ensembl_gene_id) != TRUE) 
+```
+
+
+# Quick Plot of Hertiability for babboon
+```{r}
+load_herit <- function(df){
+  df <- df[order(df$h2),]
+  df$index <- 1:nrow(df)
+  return(df)
+}
+hist(babboon$h2)
+```
+
+# Compare H2 values for the same gene in baboon vs. rats Ac
+```{r}
+Ac_h2 <- read_tsv(dir %&% "Ac_h2.txt", col_names = F)
+Ac_h2$X1 <- substr(Ac_h2$X1,5, 22)
+colnames(Ac_h2) <- c("ensembl_gene_id", "h2_rat", "se")
+
+rat_baboon <- inner_join(baboon_annot, Ac_h2, by = "ensembl_gene_id" )
+cor.test(rat_baboon$h2, rat_baboon$h2_rat, method = "spearman")
+
+qplot(x = rat_baboon$h2, y =  rat_baboon$h2_rat, geom = c("point", "smooth"), xlab = "H2 from baboon", ylab = "H2 from rats")
+
+A_df <- load_herit(rat_baboon)
+plt_1 <- (ggplot(data = A_df, aes(x = index))
+          + geom_point(aes(x=index, y=h2_rat), colour = "red", size = 0.2)
+          + geom_line(aes(y = h2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by h2 from Baboons',
+                 y = 'H2',
+                 title = "Comparison of h2 between rats and baboons for Ac"))
+plt_1
+```
+#Il
+```{r}
+Il_h2 <- read_tsv(dir %&% "Il_h2.txt", col_names = F)
+Il_h2$X1 <- substr(Il_h2$X1,5, 22)
+colnames(Il_h2) <- c("ensembl_gene_id", "h2_rat", "se")
+
+rat_baboon <- inner_join(baboon_annot, Il_h2, by = "ensembl_gene_id" )
+cor.test(rat_baboon$h2, rat_baboon$h2_rat, method = "spearman")
+
+qplot(x = rat_baboon$h2, y =  rat_baboon$h2_rat, geom = c("point", "smooth"), xlab = "H2 from baboon", ylab = "H2 from rats")
+
+A_df_Il <- load_herit(rat_baboon)
+plt_2 <- (ggplot(data = A_df_Il, aes(x = index))
+          + geom_point(aes(x=index, y=h2_rat), colour = "red", size = 0.2)
+          + geom_line(aes(y = h2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by h2 from Baboons',
+                 y = 'H2',
+                 title = "Comparison of h2 between rats and baboons for Il"))
+plt_2
+```
+#Lh
+```{r}
+Lh_h2 <- read_tsv(dir %&% "Lh_h2.txt", col_names = F)
+Lh_h2$X1 <- substr(Lh_h2$X1,5, 22)
+colnames(Lh_h2) <- c("ensembl_gene_id", "h2_rat", "se")
+
+rat_baboon <- inner_join(baboon_annot, Lh_h2, by = "ensembl_gene_id" )
+cor.test(rat_baboon$h2, rat_baboon$h2_rat, method = "spearman")
+
+qplot(x = rat_baboon$h2, y =  rat_baboon$h2_rat, geom = c("point", "smooth"), xlab = "H2 from baboon", ylab = "H2 from rats")
+
+A_df_Lh <- load_herit(rat_baboon)
+plt_3 <- (ggplot(data = A_df_Lh, aes(x = index))
+          + geom_point(aes(x=index, y=h2_rat), colour = "red", size = 0.2)
+          + geom_line(aes(y = h2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by h2 from Baboons',
+                 y = 'H2',
+                 title = "Comparison of h2 between rats and baboons for Lh"))
+plt_3
+```
+#Pl
+```{r}
+Pl_h2 <- read_tsv(dir %&% "Pl_h2.txt", col_names = F)
+Pl_h2$X1 <- substr(Pl_h2$X1,5, 22)
+colnames(Pl_h2) <- c("ensembl_gene_id", "h2_rat", "se")
+
+rat_baboon <- inner_join(baboon_annot, Pl_h2, by = "ensembl_gene_id" )
+cor.test(rat_baboon$h2, rat_baboon$h2_rat, method = "spearman")
+
+qplot(x = rat_baboon$h2, y =  rat_baboon$h2_rat, geom = c("point", "smooth"), xlab = "H2 from baboon", ylab = "H2 from rats")
+
+A_df_Pl <- load_herit(rat_baboon)
+plt_4 <- (ggplot(data = A_df_Pl, aes(x = index))
+          + geom_point(aes(x=index, y=h2_rat), colour = "red", size = 0.2)
+          + geom_line(aes(y = h2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by h2 from Baboons',
+                 y = 'H2',
+                 title = "Comparison of h2 between rats and baboons for Pl"))
+plt_4
+```
+
+
+#Vo
+```{r}
+Vo_h2 <- read_tsv(dir %&% "Vo_h2.txt", col_names = F)
+Vo_h2$X1 <- substr(Vo_h2$X1,5, 22)
+colnames(Vo_h2) <- c("ensembl_gene_id", "h2_rat", "se")
+
+rat_baboon <- inner_join(baboon_annot, Vo_h2, by = "ensembl_gene_id" )
+cor.test(rat_baboon$h2, rat_baboon$h2_rat, method = "spearman")
+
+qplot(x = rat_baboon$h2, y =  rat_baboon$h2_rat, geom = c("point", "smooth"), xlab = "H2 from baboon", ylab = "H2 from rats")
+
+A_df_Vo <- load_herit(rat_baboon)
+plt_5 <- (ggplot(data = A_df_Vo, aes(x = index))
+          + geom_point(aes(x=index, y=h2_rat), colour = "red", size = 0.2)
+          + geom_line(aes(y = h2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by h2 from Baboons',
+                 y = 'H2',
+                 title = "Comparison of h2 between rats and baboons for Vo"))
+plt_5
+
+ggarrange(plt_1, plt_2, plt_3, plt_4, plt_5 , 
+          ncol = 3, nrow = 2)
+```
+
+
+##Compare Baboons H2 to Human H2
+```{r}
+human_h2 <- read_csv(dir %&% "human_h2.csv")
+colnames(babboon) <- c("gene", "h2_babboon")
+babboon$gene <- str_to_upper(babboon$gene)
+
+hum_baboon <- inner_join(babboon, human_h2, by = "gene")
+cor.test(hum_baboon$h2, hum_baboon$h2_babboon, method = "spearman")
+
+qplot(x = hum_baboon$h2_babboon, y =  hum_baboon$h2, geom = c("point", "smooth"), xlab = "H2 from baboons", ylab = "H2 from humans")
+
+load_herit <- function(df){
+  df <- df[order(df$h2),]
+  df$index <- 1:nrow(df)
+  return(df)
+}
+
+A_df_hum <- load_herit(hum_baboon)
+plt_6 <- (ggplot(data = A_df_hum, aes(x = index))
+          + geom_point(aes(x=index, y=h2_babboon), colour = "red", size = 0.2)
+          + geom_line(aes(y = h2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by heritability',
+                 y = 'H2 from humans',
+                 title = "Comparison of heritability between Humans and Baboons")
+          # + ylim(-0.5,1)
+          # + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.08943895", size = 2)
+          # + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.08507938", size = 2)) 
+)
+plt_6
+```
+
+
+

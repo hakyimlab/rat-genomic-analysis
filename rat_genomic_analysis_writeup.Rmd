@@ -1,0 +1,316 @@
+---
+title: "Rat Genomic Analysis Writeup"
+author: "Natasha Santhanam"
+date: "10/8/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+suppressMessages(library(tidyverse))
+suppressMessages(library(devtools))
+suppressMessages(library(broom))
+suppressMessages(library(data.table))
+suppressMessages(library(RSQLite))
+suppressMessages(library(data.table))
+suppressMessages(library(qqman))
+suppressMessages(library(ggrepel))
+suppressMessages(library(ggpubr))
+"%&%" = function(a,b) paste(a,b,sep="")
+Data <- "/Users/natashasanthanam/Box/imlab-data/data-Github/rat-genomic-analysis/sql/"
+theme_set(theme_bw(base_size = 15))
+```
+
+## Progress on Gene Expression in Rats Project
+
+
+#Rat Transcript Levels are heritable 
+
+Here is the plot for cis heritability from BSLMM of rat gene expression with predicted R2 overlayed in red dots
+
+```{r load_herit function, include=FALSE}
+#read in heritability
+herit_Ac <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Ac_PVE_estimates.txt", col_names = FALSE)
+colnames(herit_Ac) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+
+#read in R2
+filename <- Data %&% "Ac_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+Ac_r2 <- dbGetQuery(conn, 'select * from extra')
+dbDisconnect(conn)
+
+#order heritability
+load_pve <- function(df){
+  df <- df[order(df$point_estimate),]
+  df$index <- 1:nrow(df)
+  return(df)
+}
+
+Ac_total <- inner_join(herit_Ac, Ac_r2, by = "gene")
+
+```
+
+
+```{r cis heritability plots, eval=TRUE}
+Ac_total <- load_pve(Ac_total)
+plt_1 <- (ggplot(data = Ac_total, aes(x = index))
+          + geom_point(aes(x=index, y=R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = point_estimate))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by PVE',
+                 y = 'Proportion of Variance Explained',
+                 title = "Ac")
+           + ylim(-0.5,1)
+           + annotate("text", x = 300, y = 0.9, label = "Mean h2 =  0.09822", size = 2)
+           + annotate("text", x = 370, y = 0.8, label = "Mean r2 =  0.08507938", size = 2)
+           + annotate("text", x= 5000, y = 0.75, label = "n(rats) = 78", size = 5)) 
+plt_1
+```
+
+# Gene expression in Rats is Sparse
+
+Looking at the graph of correlation between different mixing parameters, it appears that non zero outperforms zero. 
+```{r sparsity analysis}
+tempo <- read_tsv( "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_elasticNet_cor.txt", col_names = TRUE)
+
+data_long <- tempo %>%  pivot_longer(!gene, names_to = "value", values_to = "count")
+
+plt_2 <- ggplot(data_long, aes(x = as.numeric(value), y = count)) + geom_smooth(show.legend = FALSE, se=T, size = .2)  +  xlab(expression(paste("elastic net mixing parameter (",alpha, ")"))) + ylab(expression(paste("10-fold cross-validation R"))) + theme_bw(base_size = 12) + coord_cartesian(ylim=c(0,0.4),xlim=c(-0.02,1.02))
+
+plt_3 = ggplot(tempo, aes(x = `0`, y = `0.5`)) + geom_hex(bins = 50)   +
+      geom_abline(slope = 1, intercept = 0, color = "darkgrey", size = 0.8) +
+      ylab("cor for mixing paramter = 0.5" ) +
+      xlab("cor for mixing paramter = 0")
+
+plt_2
+plt_3
+```
+
+# Predicting transcript levels in rats is easier than in humans
+
+```{r compare to gtex fig, include=TRUE}
+GWAS.df <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/GWAS_elasticnet_data.figure.txt", col_names = TRUE)
+
+tissue <- c("Ac", "Il", "Lh", "Pl", "Vo")
+n.genes <- c(8567, 8856, 8244, 8315, 8821)
+n.samples <- c(78, 83, 83, 81, 82)
+rats.df <- data.frame(tissue, n.genes , n.samples)
+
+GWAS.df <- rbind(GWAS.df, rats.df)
+GWAS.df <- GWAS.df %>% mutate(species = ifelse(tissue=="Ac" | tissue =="Il" | tissue =="Pl" | tissue=="Lh" | tissue=="Vo","rat","human"))
+
+
+ggplot(GWAS.df, mapping = aes(n.samples, n.genes)) + geom_point(size = ifelse(GWAS.df$species == "human", 1.2, 1.5), shape = ifelse(GWAS.df$species == "human", 1, 20), color = ifelse(GWAS.df$species == "human", "dimgrey", "black")) + geom_label_repel(aes(label=ifelse(species == "rat", as.character(tissue),'')), box.padding   = 0.35, point.padding = 0.5) +  xlab("Number of Individuals") + ylab("Number of Genes Predicted")  + theme(legend.position = "None") 
+```
+
+# Predictability similar across tissues and species
+```{r compare R2 across tissues, include=TRUE}
+dir <- "/Users/natashasanthanam/Box/imlab-data/data-Github/rat-genomic-analysis/sql/"
+filelist <- list.files(dir, pattern = ".db", full.names = TRUE)
+
+filename <- filelist[5]
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+rat_pred <- dbGetQuery(conn, 'select * from extra')
+rat_pred <- rat_pred %>% dplyr::select(c(gene, pred.perf.R2)) %>% rename(Vo = pred.perf.R2)
+dbDisconnect(conn)
+
+filelist <- filelist[1:(length(filelist) - 1)]
+for(fila in filelist) {
+  filename <-  fila
+  tis <- substr(fila, 78, 79)
+  sqlite.driver <- dbDriver("SQLite")
+  conn <- dbConnect(RSQLite::SQLite(), filename)
+  extra <- dbGetQuery(conn, 'select * from extra') %>% dplyr::select(c(gene, R2))
+  colnames(extra)[2] <-  tis
+  rat_pred <- inner_join(rat_pred, extra, by = "gene") 
+  dbDisconnect(conn)
+}
+
+rownames(rat_pred) <- rat_pred$gene
+rat_pred <- rat_pred %>% dplyr::select(-c(gene))
+pairs(rat_pred)
+```
+
+
+
+```{r compare R2 across GTEx tissues, include = TRUE}
+predict_GTEx_tiss <- readRDS("/Users/natashasanthanam/Github/rat-genomic-analysis/data/pred_R2_betw_GTEx_brain_tissues.RDS")
+pairs(predict_GTEx_tiss)
+```
+# PrediXcan results
+```{r prediXcan results, include=TRUE}
+full_df <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_metabolic_traits_Ac_full_assocs.txt", col_names = TRUE)
+
+tempo_df <- full_df %>% filter(pvalue < 5.836349e-06)
+
+#589 sig genes
+tempo_df %>% group_by(gene) %>% summarise(n = n())
+
+#all 10 traits
+tempo_df %>% group_by(metabolic_trait) %>% summarise(n = n())
+
+
+gene_annot <- readRDS("/Users/natashasanthanam/Github/rat-genomic-analysis/data/gene_annotation.RDS") %>% dplyr::select(c(chr, gene_id, gene_name, start, end)) %>% rename(gene = gene_id)
+
+tempo_manhatt <- inner_join(gene_annot, full_df, by = "gene")
+tempo_manhatt$chr <- as.numeric(tempo_manhatt$chr)
+
+manhattan(tempo_manhatt, chr="chr", bp="start", snp="gene", p="pvalue", ylim = c(0, 10), suggestiveline = F, genomewideline = F, main = "Manhattan plot of Significant PrediXcan associations")
+abline(h= 5.233859, col="red")
+#only keep R2 > 0.1
+
+
+tempo_df <- full_df %>% filter(pvalue < 1e-03)
+#qqplot
+qqplot_by_group <- function(pval, group, pval_cutoff = 1, ...) {
+  n <- length(pval)
+  pexp <- rank(pval) / n
+  df <- data.frame(p.val = pval, grp = group) %>% group_by(grp) %>% mutate(p.exp = pval_cutoff * rank(p.val) / (n() + 1)) %>% ungroup()
+  p <- ggplot(df) + 
+    geom_point(aes(x = -log10(p.exp), y = -log10(p.val), color = grp), ...) + 
+    geom_hline(yintercept = -log10(0.05 / n)) + 
+    geom_abline(slope = 1, intercept = 0, linetype = 2)
+  return(p)
+}
+qqplot_by_group(tempo_df$pvalue, group = 1, pval_cutoff = 1e-3)
+```
+
+```{r manhattan plot for each trait}
+bmi_bodylength_w_tail <- full_df %>% filter(metabolic_trait == "bmi_bodylength_w_tail")
+bmi_w_tail_manhatt <- inner_join(gene_annot, bmi_bodylength_w_tail, by = "gene")
+bmi_w_tail_manhatt$chr <- as.numeric(bmi_w_tail_manhatt$chr)
+
+manhattan(bmi_w_tail_manhatt, chr="chr", bp="start", snp="gene", p="pvalue", ylim = c(0, 10), suggestiveline = F, genomewideline = F, main = "Manhattan plot for BMI Bodylength with Tail")
+abline(h= 5.233859, col="red")
+
+
+bodyweight <- full_df %>% filter(metabolic_trait == "bodyweight")
+bodyweight_manhat <- inner_join(gene_annot, bodyweight, by = "gene")
+bodyweight_manhat$chr <- as.numeric(bodyweight_manhat$chr)
+
+manhattan(bodyweight_manhat, chr="chr", bp="start", snp="gene", p="pvalue", ylim = c(0, 10), suggestiveline = F, genomewideline = F, main = "Manhattan plot for Bodyweight")
+abline(h= 5.233859, col="red")
+
+
+retrofat <- full_df %>% filter(metabolic_trait == "retrofat")
+retrofat_manhat <- inner_join(gene_annot, retrofat, by = "gene")
+retrofat_manhat$chr <- as.numeric(retrofat_manhat$chr)
+
+manhattan(retrofat_manhat, chr="chr", bp="start", snp="gene", p="pvalue", ylim = c(0, 10), suggestiveline = F, genomewideline = F, main = "Manhattan plot for Retrofat")
+abline(h= 5.233859, col="red")
+
+
+fasting_glucose <- full_df %>% filter(metabolic_trait == "fasting_glucose")
+fasting_glucose_manhat <- inner_join(gene_annot, fasting_glucose, by = "gene")
+fasting_glucose_manhat$chr <- as.numeric(fasting_glucose_manhat$chr)
+
+manhattan(fasting_glucose_manhat, chr="chr", bp="start", snp="gene", p="pvalue", ylim = c(0, 10), suggestiveline = F, genomewideline = F, main = "Manhattan plot for Fasting Glucose")
+abline(h= 5.233859, col="red")
+```
+
+
+
+# Analysis of Reults using double nested R2 in cis Lasso
+```{r compare double nested to single nested, include = FALSE}
+cis_lasso_R2 <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Ac_cis_Lasso_doublenested_perf.txt", col_names = TRUE) %>% rename(gene = phenotype)
+
+filename <- "/Users/natashasanthanam/Box/imlab-data/data-Github/rat-genomic-analysis/sql/Ac_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+elasticnet_R2 <- dbGetQuery(conn, 'select * from extra')
+dbDisconnect(conn)
+```
+
+Single nested Elastic net R2 seems to overestimate R2 when compared using a double nested method
+```{r correlation and evaluation of single vs double nested}
+EN_lasso <- inner_join(cis_lasso_R2, elasticnet_R2, by = "gene")
+cor.test(EN_lasso$R2.x, EN_lasso$R2.y)
+
+ggplot(EN_lasso, aes(R2.y, R2.x)) + geom_point() + xlab("Single nested R2 from Elastic Net") + ylab("Double nested R2 from Lasso") + geom_abline()
+```
+If we generate the same figure as from before, we see that using a double nested R2 means that rats map similar to that in GTEx tissues
+```{r evaluate number of genes that are positive in double nested cis lasso in rats}
+cis_lasso_R2 %>% count(R2 >= 0) # only 2339 genes are predicted in double nested in lasso 
+
+GWAS.df <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/GWAS_elasticnet_data_non_neg_R2_fig.txt", col_names = TRUE)
+tis <- c("Ac")
+n.genes <- c(2339)
+n <- c(78)
+rats_df <- data.frame(tis, n.genes , n)
+
+GWAS.df <- rbind(GWAS.df, rats_df)
+GWAS.df <- GWAS.df %>% mutate(species = ifelse(tis=="Ac","rat","human"))
+
+theme_set(theme_bw(base_size = 12))
+ggplot(GWAS.df, mapping = aes(n, n.genes)) + geom_point(size = ifelse(GWAS.df$species == "human", 1.2, 1.5), shape = ifelse(GWAS.df$species == "human", 1, 20), color = ifelse(GWAS.df$species == "human", "dimgrey", "black")) + geom_label_repel(aes(label=ifelse(species == "rat", as.character(tis),'')), box.padding   = 0.35, point.padding = 0.5) +  xlab("Number of Individuals") + ylab("Number of Genes Predicted")  + theme(legend.position = "None") + ggtitle("Comparison to GTEx when counting for genes with double-nested R2 >= 0")
+```
+
+
+# Ordered Heritability Plot in Rats and Humans using Double Nested R2
+
+Rats
+```{r inner join with double nested R2, include=FALSE}
+double_nested_herit_Ac <- inner_join(herit_Ac, cis_lasso_R2, by = "gene")
+double_nested_herit_Ac <- load_pve(double_nested_herit_Ac) 
+```
+
+```{r herit plot}
+plt_2 <- (ggplot(data = double_nested_herit_Ac, aes(x = index))
+          + geom_point(aes(x=index, y=R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = point_estimate))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by PVE',
+                 y = 'Proportion of Variance Explained',
+                 title = "Ac")
+           + ylim(-0.5,1)
+           + annotate("text", x = 300, y = 0.9, label = "Mean h2 =  0.09822", size = 2)
+           + annotate("text", x = 370, y = 0.8, label = "Mean r2 = -0.02087655", size = 2)
+           + annotate("text", x= 5000, y = 0.75, label = "n(rats) = 78", size = 5)) 
+plt_2
+```
+
+Humans
+```{r read in human h2 and r2, include=FALSE}
+human_herit <- read_csv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/human_h2.csv")
+
+load_herit <- function(df){
+  df <- df[order(df$h2),]
+  df$index <- 1:nrow(df)
+  return(df)
+}
+```
+
+
+```{r herit plot humans}
+human_herit <- load_herit(human_herit) 
+
+plt_3 <- (ggplot(data = human_herit, aes(x = index))
+          + geom_point(aes(x=index, y=en_r2), colour = "red", size = 0.2)
+          + geom_line(aes(y = h2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "Humans")
+           + ylim(-0.5,1)
+           + annotate("text", x = 390, y = 0.9, label = "Mean h2 =  0.1263636", size = 2)
+           + annotate("text", x = 370, y = 0.8, label = "Mean r2 = 0.1189", size = 2)) 
+plt_3
+```
+
+```{r scatter_plot of r2 vs h2 humans and rats}
+gcta_herit <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Ac_h2_annot.txt", col_names = TRUE) %>% rename(gene = ensembl_gene_id)
+gcta_herit <- inner_join(Ac_r2, gcta_herit, by = "gene")
+
+p3 = ggplot(gcta_herit, aes(h2, R2)) + geom_hex() + xlab("GCTA Heritability") + ylab("Singled Nested Predicted R2") + geom_abline(color = "dimgrey") + ggtitle("H2 vs R2 in Rats")
+
+p4 = ggplot(human_herit, aes(h2, en_r2)) + geom_hex() + ylab("Single Nested Predicted R2") + xlab("GCTA heritability") + geom_abline(color = "dimgrey") + ggtitle("H2 vs R2 in Humans")
+
+ggarrange(p3, p4, ncol=2, nrow =1)
+```
+
+```{r}
+
+```
+
+

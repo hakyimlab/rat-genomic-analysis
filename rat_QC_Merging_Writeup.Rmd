@@ -1,0 +1,252 @@
+---
+title: "Rat QC and Comparison Check"
+author: "Natasha Santhanam"
+date: "10/26/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+suppressMessages(library(tidyverse))
+suppressMessages(library(data.table))
+suppressMessages(library(RSQLite))
+suppressMessages(library(qqman))
+"%&%" = function(a,b) paste(a,b,sep="")
+geno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/rat_genotypes_LD_pruned_0.95/"
+data.dir <- "/Users/natashasanthanam/CRI/"
+```
+
+## Compare the overlap of Rats between the original 80 and new ones sent by Apurva
+
+Apurva sent bimbam files that I converted to map/ped and then bim/bed/fam files using my own pipeline. Pipeline is in rat_compare_genotypes.Rmd file.
+
+# Cleanup
+
+QC for Missingness in Apurva's data
+
+```{r check missing, eval=FALSE}
+plink --bfile rat_metabolic_impute --missing --out rat_metabolic_missing
+ 
+#can also check missingness in Tyson's rats - shouldn't be since genotypes are imputed
+plink --bfile rat_geno_merged_Ac --missing --out rat_Ac_missing
+```
+
+```{r visualize missingness for both files}
+#Missingess in Apurva's dataset
+indmiss<-read.table(file= data.dir %&% "rat_metabolic_missing.imiss", header=TRUE)
+snpmiss<-read.table(file= data.dir %&% "rat_metabolic_missing.lmiss", header=TRUE)
+
+summary(indmiss$N_MISS)
+summary(snpmiss$N_MISS)
+
+#Missingness in Tyson's rats
+indmiss<-read.table(file= data.dir %&% "rat_Ac_missing.imiss", header=TRUE)
+snpmiss<-read.table(file= data.dir %&% "rat_Ac_missing.lmiss", header=TRUE)
+
+summary(indmiss$N_MISS)
+summary(snpmiss$N_MISS)
+```
+
+As we expected since this is all imputed data, there are no snps missing across individuals or individuals missing
+
+
+Before merging, I'll mark the ids of the Fam file from the original 80 so that way we can identify them later. This is in CRI. All the genotypes are in  /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/rat_genotypes_LD_pruned_0.95/plink_format/
+
+```{r mark fam file, eval=FALSE}
+fam <- read.table("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/rat_genotype_Ac.fam")
+fam$V1 <- paste(fam$V1, "T", sep = "_")
+fam$V2 <- fam$V1
+write.table(fam, geno.dir %&% "plink_format/rat_geno_merged_Ac.fam", col.names=FALSE, row.names=FALSE, quote=FALSE)
+```
+
+
+Also, I have to edit the varID in the bim file for the original 80 rats. The varID is {chr}_{pos}_{ref}_{alt} and in the 3000 rats bim file it's chr{}:{pos} 
+
+```{r edit bim file, eval=FALSE}
+bim <- read.table("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/rat_genotype_Ac.bim")
+bim$V2 <- paste(paste("chr", bim$V1, sep= ""), bim$V4, sep = ":")
+write.table(bim, geno.dir %&% "plink_format/rat_geno_merged_Ac.bim", col.names=FALSE, row.names=FALSE, quote=FALSE)
+```
+
+
+# Merge the both rat genotype data sets
+
+
+```{bash make sure the two datasets have the same build}
+# Remove variants based on MAF.
+plink --bfile rat_metabolic_impute --maf 0.05 --allow-no-sex --make-bed --out rat_metabolic_impute_maf
+
+# Extract the variants present in 80 rats from the 3000 rats genomes dataset.
+awk '{print$2}' rat_geno_merged_Ac.bim > rat_geno_Ac_SNPs.txt
+plink --bfile rat_metabolic_impute_maf --extract rat_geno_Ac_SNPs.txt --make-bed --out rat_metabolic_impute_same_snps
+
+# Extract the variants present in 3000 rats Genomes dataset from the 80 rats dataset.
+awk '{print$2}' rat_metabolic_impute.bim > rat_metabolic_SNPs.txt
+plink --bfile rat_geno_merged_Ac --extract rat_metabolic_SNPs.txt --recode --make-bed --out rat_geno_merged_Ac_same_snps
+# The datasets now contain the exact same variants.
+
+## The datasets must have the same build. Change the build 3000 rats Genomes data build.
+awk '{print$2,$4}' rat_metabolic_impute.map  > buildratmetabolic.txt
+# buildratmetabolic.txt contains one SNP-id and physical position per line.
+
+plink --bfile rat_geno_merged_Ac_same_snps --update-map buildratmetabolic.txt --make-bed --out rat_geno_merged_Ac_same_build
+# both files  now have the same build.
+```
+
+
+ Prior to merging,  want to make sure that the files are mergeable, for this we conduct 3 steps:
+ 
+ 
+1) Make sure the reference genome is similar in the 80 rat plink files and the 3000 rat datasets.
+
+```{bash set ref genome, eval=FALSE}
+awk '{print$2,$5}' rat_geno_merged_Ac_same_build.bim > rat_Ac_ref-list.txt
+
+plink --bfile rat_metabolic_impute_same_snps --reference-allele rat_Ac_ref-list.txt --make-bed --out rat_metabolic-adj
+```
+
+2) Resolve strand issues.
+
+```{bash resolve strand issues, eval=FALSE}
+# Check for potential strand issues.
+awk '{print$2,$5,$6}' rat_geno_merged_Ac_same_build.bim > rat_genotype_Ac-adj_tmp
+awk '{print$2,$5,$6}' rat_metabolic-adj.bim > rat_metabolic_impute_tmp 
+sort rat_metabolic_impute_tmp rat_genotype_Ac-adj_tmp |uniq -u > all_differences.txt
+# 366 differences between the files, some of these might be due to strand issues.
+```
+
+```{bash flip snps, eval=FALSE}
+# Print SNP-identifier and remove duplicates.
+awk '{print$1}' all_differences.txt | sort -u > flip_list.txt
+# Generates a file of 366 SNPs. These are the non-corresponding SNPs between the two files. 
+# Flip the 366 non-corresponding SNPs. 
+
+plink --bfile rat_metabolic-adj --flip flip_list.txt --reference-allele rat_Ac_ref-list.txt --make-bed --out corrected_rat_metabo
+
+# Check for SNPs which are still problematic after they have been flipped.
+awk '{print$2,$5,$6}' corrected_rat_metabo.bim > corrected_rat_metab_tmp
+sort rat_genotype_Ac-adj_tmp corrected_rat_metab_tmp |uniq -u  > uncorresponding_SNPs.txt
+```
+
+3) Remove the SNPs which after the previous two steps still differ between datasets.
+
+```{bash remove problematic snps, eval=FALSE}
+awk '{print$1}' uncorresponding_SNPs.txt | sort -u > SNPs_for_exlusion.txt
+# The command above generates a list of the 366 SNPs
+
+# Remove problematic SNPs from both datasets.
+plink --bfile corrected_rat_metabo --exclude SNPs_for_exlusion.txt --make-bed --out rat_metabolic_corr 
+
+plink --bfile rat_geno_merged_Ac_same_build --exclude SNPs_for_exlusion.txt --make-bed --out rat_geno_Ac_MDS2
+
+# Merge original rat file with rat metabolic phenotype Data.
+plink --bfile rat_metabolic_corr --bmerge rat_geno_Ac_MDS2.bed rat_geno_Ac_MDS2.bim rat_geno_Ac_MDS2.fam --allow-no-sex --make-bed --out all_rats_merged
+```
+
+After all of this I generated a set of plink files all_rats_merged with 3551 rats (3473 + 78). Next, I'll generate the GRM using GCTA 
+
+
+# Generate GRM for both merged rats and only for the 3000
+```{bash create GRM for only 3000 rats, eval=FALSE}
+gcta --bfile rat_metabolic_impute --make-grm-bin --out rat_metabolic_grm
+```
+
+
+This is done in CRI and in this folder /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/rat_genotypes_LD_pruned_0.95/plink_format/GRMs
+```{bash create GRM for merged rats, eval=FALSE}
+gcta --bfile all_rats_merged --make-grm-bin --out all_rats_grm
+```
+
+Next we can read in the GRM using the readGRM function
+
+```{r read GRM, include=FALSE}
+#from https://gist.github.com/explodecomputer/7150052
+ReadGRMBin=function(prefix, AllN=F, size=4){
+sum_i=function(i){
+     return(sum(1:i))
+   }
+   BinFileName=paste(prefix,".grm.bin",sep="")
+   NFileName=paste(prefix,".grm.N.bin",sep="")
+   IDFileName=paste(prefix,".grm.id",sep="")
+   id = read.table(IDFileName)
+   n=dim(id)[1]
+   BinFile=file(BinFileName, "rb");
+   grm=readBin(BinFile, n=n*(n+1)/2, what=numeric(0), size=size)
+   NFile=file(NFileName, "rb");
+   if(AllN==T){
+     N=readBin(NFile, n=n*(n+1)/2, what=numeric(0), size=size)
+   }
+   else N=readBin(NFile, n=1, what=numeric(0), size=size)
+   i=sapply(1:n, sum_i)
+   return(list(diag=grm[i], off=grm[-i], id=id, N=N))
+}
+
+readGRM <- function(rootname)
+{
+	bin.file.name <- paste(rootname, ".grm.bin", sep="")
+	n.file.name <- paste(rootname, ".grm.N.bin", sep="")
+	id.file.name <- paste(rootname, ".grm.id", sep="")
+
+	cat("Reading IDs\n")
+	id <- read.table(id.file.name, colClasses="character")
+	n <- dim(id)[1]
+	cat("Reading GRM\n")
+	bin.file <- file(bin.file.name, "rb")
+	grm <- readBin(bin.file, n=n*(n+1)/2, what=numeric(0), size=4)
+	close(bin.file)
+	cat("Reading N\n")
+	n.file <- file(n.file.name, "rb")
+	N <- readBin(n.file, n=n*(n+1)/2, what=numeric(0), size=4)
+	close(n.file)
+
+	cat("Creating data frame\n")
+	l <- list()
+	for(i in 1:n)
+	{
+		l[[i]] <- 1:i
+	}
+	col1 <- rep(1:n, 1:n)
+	col2 <- unlist(l)
+	grm <- data.frame(id1=col1, id2=col2, N=N, grm=grm)	
+
+	ret <- list()
+	ret$grm <- grm
+	ret$id <- id
+	return(ret)
+}
+```
+
+Here is the histogram of both the diagonal and off diagonal GRM for the 3000 rats before ever merging
+```{r read and analyze the pre merging GRM}
+rats_metabolic_GRM <- ReadGRMBin(data.dir %&% "rat_metabolic_grm")
+diag <- as.data.frame(rats_metabolic_GRM$diag) %>% rename(val = `rats_metabolic_GRM$diag`)
+ggplot(diag, aes(x = val)) + geom_histogram(binwidth = 0.01, colour="black", fill="white") + labs(title = "Histogram of Diagonal of GRM of original 3473 rats before merging", x= "Diagonal", y = "Count")
+
+off <- as.data.frame(rats_metabolic_GRM$off) %>% rename(val = `rats_metabolic_GRM$off`)
+ggplot(off, aes(x = val)) + geom_histogram(binwidth = 0.01, colour="black", fill="white") + labs(title = "Histogram of Off - Diagonal of GRM of original 3473 rats before merging", x= "off Diagonal", y = "Count")
+```
+
+Here is the histogram of both the diagonal and off diagonal GRM for the 3551 rats after merging
+
+```{r read and analyze the GRM}
+all_rats_GRM <- ReadGRMBin(data.dir %&% "all_rats_grm")
+diag <- as.data.frame(all_rats_GRM$diag) %>% rename(val = `all_rats_GRM$diag`)
+ggplot(diag, aes(x = val)) + geom_histogram(binwidth = 0.03, colour="black", fill="white") + labs(title = "Histogram of Diagonal of GRM of merged 3551 rats", x= "Diagonal", y = "Count")
+
+off <- as.data.frame(all_rats_GRM$off) %>% rename(val = `all_rats_GRM$off`)
+ggplot(off, aes(x = val)) + geom_histogram(binwidth = 0.03, colour="black", fill="white") + labs(title = "Histogram of Off Diagonal of GRM of merged 3551 rats", x= " off Diagonal", y = "Count")
+```
+
+
+That small group to the right of the histogram are  the relatedness between the 40ish rats that overlap between Tyson and Apurva's mice. 
+
+```{r}
+tyson_rats <- read_tsv(data.dir %&% "list_of_tyson_rats.txt", col_names = TRUE)
+all_rats <- readGRM(data.dir %&% "all_rats_grm")
+all_rats$grm$id1 <- all_rats$id[match(all_rats$grm$id1, rownames(all_rats$id)), 1]
+all_rats$grm$id2 <- all_rats$id[match(all_rats$grm$id2, rownames(all_rats$id)), 1]
+
+overlap_rats <- all_rats$grm 
+overlap_rats <- overlap_rats %>% filter(id1 %in% tyson_rats$V1 | id2 %in% tyson_rats$V1) %>% filter(grm <= -1)
+head(overlap_rats)
+```
+

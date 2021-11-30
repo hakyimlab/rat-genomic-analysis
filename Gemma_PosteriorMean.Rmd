@@ -1,0 +1,349 @@
+---
+title: "Gemma_PosteriorMean"
+author: "Natasha Santhanam"
+date: "3/11/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+"%&%" = function(a,b) paste(a,b,sep="")
+Data <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+#Function to find the beta of the posterior distribution
+```{r}
+beta.select=function(quantile1,quantile2)
+{
+betaprior1=function(K,x,p)
+# suppose one is given a beta(K*m, K*(1-m)) prior 
+# where the pth quantile is given by x
+# function outputs the prior mean m
+{
+m.lo=0; m.hi=1; flag=0
+while(flag==0)
+{
+m0=(m.lo+m.hi)/2
+p0=pbeta(x,K*m0,K*(1-m0))
+if(p0<=p) m.hi=m0 else m.lo=m0
+if(abs(p0-p)<.0001) flag=1
+}
+return(m0)
+}
+
+p1=quantile1$p; x1=quantile1$x
+p2=quantile2$p; x2=quantile2$x
+
+logK=seq(-3,8,length=100); K=exp(logK)
+m=sapply(K,betaprior1,x1,p1)
+
+prob2=pbeta(x2,K*m, K*(1-m))
+ind=((prob2>0)&(prob2<1))
+app=approx(prob2[ind],logK[ind],p2)
+K0=exp(app$y)
+m0=betaprior1(K0,x1,p1)
+
+return(round(K0*c(m0,(1-m0)),2))
+}
+```
+
+Calculate Posterior Probability for PVG/PVE 
+
+##Ac
+
+#Find point estimate and 95% credible interval in CRI for PVE
+
+```{r, eval=FALSE}
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/output"
+files <- list.files(path = ge.dir, pattern = ".hyp.txt", full.names = TRUE)
+```
+
+```{r, eval=FALSE}
+PVE_df <- as.data.frame(matrix(NA, 0, 4)) 
+
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pve, 0.1)
+  q2 <- quantile(df$pve, 0.9)
+  quantile1=list(p=.1 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PVE_df[i, 1] <- gene
+  PVE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PVE_df[i, 3] <- credible_set[1]
+  PVE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PVE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/PVE_estimates.txt", col_names = FALSE )
+
+PGE_df <- as.data.frame(matrix(NA, 0, 4))
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pge, 0.5)
+  q2 <- quantile(df$pge, 0.9)
+  quantile1=list(p=.5 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PGE_df[i, 1] <- gene
+  PGE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PGE_df[i, 3] <- credible_set[1]
+  PGE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PGE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/PGE_estimates.txt", col_names = FALSE )
+```
+
+#Read in PVE/PGE estiamtes
+```{r}
+pve <- read_tsv(Data %&% "PVE_estimates.txt")
+
+
+q = seq(0,1,length=100)
+plot(q, dbeta(q, quantile1$x,quantile2$x), main="Posterior for ENSRNOG00000000007", ylab="density", type="l")
+```
+
+##Il
+```{r, eval=FALSE}
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Il/output"
+files <- list.files(path = ge.dir, pattern = ".hyp.txt", full.names = TRUE)
+```
+
+```{r, eval=FALSE}
+PVE_df <- as.data.frame(matrix(NA, 0, 4)) 
+
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pve, 0.1)
+  q2 <- quantile(df$pve, 0.9)
+  quantile1=list(p=.1 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PVE_df[i, 1] <- gene
+  PVE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PVE_df[i, 3] <- credible_set[1]
+  PVE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PVE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Il/PVE_estimates.txt", col_names = FALSE )
+
+PGE_df <- as.data.frame(matrix(NA, 0, 4))
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pge, 0.5)
+  q2 <- quantile(df$pge, 0.9)
+  quantile1=list(p=.5 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PGE_df[i, 1] <- gene
+  PGE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PGE_df[i, 3] <- credible_set[1]
+  PGE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PGE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Il/PGE_estimates.txt", col_names = FALSE )
+```
+
+
+##Lh
+```{r, eval=FALSE}
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Lh/output"
+files <- list.files(path = ge.dir, pattern = ".hyp.txt", full.names = TRUE)
+```
+
+```{r, eval=FALSE}
+PVE_df <- as.data.frame(matrix(NA, 0, 4)) 
+
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pve, 0.1)
+  q2 <- quantile(df$pve, 0.9)
+  quantile1=list(p=.1 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PVE_df[i, 1] <- gene
+  PVE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PVE_df[i, 3] <- credible_set[1]
+  PVE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PVE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Lh/PVE_estimates.txt", col_names = FALSE )
+
+PGE_df <- as.data.frame(matrix(NA, 0, 4))
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pge, 0.5)
+  q2 <- quantile(df$pge, 0.9)
+  quantile1=list(p=.5 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PGE_df[i, 1] <- gene
+  PGE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PGE_df[i, 3] <- credible_set[1]
+  PGE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PGE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Lh/PGE_estimates.txt", col_names = FALSE )
+```
+
+##Pl
+```{r, eval=FALSE}
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Pl/output"
+files <- list.files(path = ge.dir, pattern = ".hyp.txt", full.names = TRUE)
+```
+
+```{r, eval=FALSE}
+PVE_df <- as.data.frame(matrix(NA, 0, 4)) 
+
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pve, 0.1)
+  q2 <- quantile(df$pve, 0.9)
+  quantile1=list(p=.1 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PVE_df[i, 1] <- gene
+  PVE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PVE_df[i, 3] <- credible_set[1]
+  PVE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PVE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Pl/PVE_estimates.txt", col_names = FALSE )
+
+PGE_df <- as.data.frame(matrix(NA, 0, 4))
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pge, 0.5)
+  q2 <- quantile(df$pge, 0.9)
+  quantile1=list(p=.5 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PGE_df[i, 1] <- gene
+  PGE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PGE_df[i, 3] <- credible_set[1]
+  PGE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PGE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Pl/PGE_estimates.txt", col_names = FALSE )
+```
+
+##Vo
+```{r, eval=FALSE}
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Vo/output"
+files <- list.files(path = ge.dir, pattern = ".hyp.txt", full.names = TRUE)
+```
+
+```{r, eval=FALSE}
+PVE_df <- as.data.frame(matrix(NA, 0, 4)) 
+
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pve, 0.1)
+  q2 <- quantile(df$pve, 0.9)
+  quantile1=list(p=.1 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PVE_df[i, 1] <- gene
+  PVE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PVE_df[i, 3] <- credible_set[1]
+  PVE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PVE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Vo/PVE_estimates.txt", col_names = FALSE )
+
+PGE_df <- as.data.frame(matrix(NA, 0, 4))
+for(i in 1:length(files)){
+  gene <- substr(sapply(strsplit(files[i],"/"), `[`, 11), 8, 25)
+  df <- read_tsv(files[i])
+  
+  q1 <- quantile(df$pge, 0.5)
+  q2 <- quantile(df$pge, 0.9)
+  quantile1=list(p=.5 ,x=q1)
+  quantile2=list(p=.9, x=q2)
+  if(quantile1$x != quantile2$x) {
+  prior <- beta.select(quantile1, quantile2)
+  credible_set <- list(qbeta(0.025,prior[1],  prior[2]), qbeta(0.975,prior[1],  prior[2]))
+  
+  PGE_df[i, 1] <- gene
+  PGE_df[i, 2] <- qbeta(0.5, prior[1],  prior[2])
+  PGE_df[i, 3] <- credible_set[1]
+  PGE_df[i, 4] <- credible_set[2]
+  }
+  else 
+    i = i+1
+}
+
+write_tsv(PGE_df, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Vo/PGE_estimates.txt", col_names = FALSE )
+```
+

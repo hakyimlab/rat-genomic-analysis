@@ -1,0 +1,209 @@
+---
+title: "Summary_PTRS_PGS"
+author: "Natasha Santhanam"
+date: "11/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(data.table)
+library(readxl)
+library(qqman)
+library(arrow)
+library(RSQLite)
+library(glmnet)
+library(GenomicRanges)
+library(liftOver)
+library(ggpubr)
+"%&%" = function(a,b) paste(a,b,sep="")
+dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+## Compare Summary PGRS weights in Observed Height in Personal Genomes Project Data 
+
+We  have genotype data (vcf and plink) and phenotype Data. First need to predict expression in PGP data using Skeletal Muscle models from GTEx. Then we can calculate predicted height in PGP using out Summary PTRS weights. Finally then we can compare to observed phenotypic data. 
+
+```{r read in PGP data}
+DATA="/Users/natashasanthanam/Box/imlab-data/data-Github/web-data/2021-04-21-personal-genomes-project-data/"
+```
+
+# First calculate predicted expression for PGP data with Skeletal Muscles 
+
+Both the genotypes and model use rsids so easy to calculate predicted expression.
+```{bash run prediXcan, eval=FALSE}
+#!/bin/bash
+
+#PBS -N PGP_$TISSUE_prediXcan
+#PBS -S /bin/bash
+#PBS -l walltime=48:00:00
+#PBS -l nodes=2:ppn=1
+
+#PBS -l mem=9gb
+
+
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/logs/pgp_$TISSUE.out
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/logs/pgp_$TISSUE.err
+
+source ~/.bashrc
+source ~/.bash_profile
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/
+
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/Data/Personal-Genomes/genotype
+export MODEL=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/ctimp
+export RESULTS=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/PGP
+
+printf "Predict expression\n\n"
+
+python3 $METAXCAN/Predict.py \
+--model_db_path $MODEL/ctimp_$TISSUE.db \
+--vcf_genotypes $GENO/repgp-imputed.chr*  \
+--vcf_mode genotyped \
+--prediction_output $RESULTS/PGP_$TISSUE__predict.txt \
+--prediction_summary_output $RESULTS/PGP_$TISSUE__summary.txt \
+--verbosity 9 \
+--throw
+```
+
+```{bash run prediXcan, eval=FALSE}
+tissue=Whole_Blood
+qsub -v TISSUE=$tissue PGP_prediXcan.pbs
+```
+
+
+#Calculate Predicted Height using Summary PTRS weights and Predicted Expression from above
+
+Will use the PTRS weights that were made with Skeletal Muscle
+```{r file dir, eval=FALSE}
+data.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/"
+```
+
+# Match genes in weights file in humans to predicted expression in PGP
+```{r read in weights and expression, eval=FALSE}
+weights <- read_tsv(data.dir %&% "PTRS_weights/weight_files/spxcan2ptrs_original_scale.Standing_height.Muscle_Skeletal.weights.tsv")
+weights <- read_tsv(data.dir %&% "PTRS_weights/weight_files/spxcan2ptrs_clump.Standing_height.Muscle_Skeletal.weights.tsv")
+
+# Here we use predicted expression not predicted and make sure to use human ensembl id gene name
+pred_expr <- read_tsv(data.dir %&% "PTRS_weights/PGP/PGP_skeletal_muscle__predict.txt") %>% select(-c(FID))
+```
+
+
+```{r inner join all genes, eval=FASLE}
+#Do inner join of all genes in weight and expression files - 7,671 genes in common between the two
+rownames(weights) <- weights$gene_name
+weights <- weights[intersect(colnames(pred_expr), weights$gene_name), ]
+expr <- pred_expr[, intersect(colnames(pred_expr), weights$gene_name)]
+expr <- expr %>%  mutate(ID = pred_expr$IID, .before = colnames(expr)[1])
+```
+
+
+# Generate predicted values for Height using all models 
+```{r generate predicted trait, eval=FALSE}
+fn_generate_trait = function(exp, weights)
+  {
+   nsample = length(exp$ID)
+   nmodels = ncol(weights) - 1
+   pred_height <- matrix(0, nrow = nsample, ncol = nmodels)
+   for(i in 1:nmodels) {
+     c1 <- as.matrix(weights[,i+1])
+     for(j in 1:nsample) {
+       df <- as.matrix(exp[j, 2:ncol(exp)])
+       pred_height[j,i] <- df %*% c1
+     }
+   }
+   rownames(pred_height) <- exp$ID
+   colnames(pred_height) <- colnames(weights)[2:ncol(weights)]
+}
+```
+
+
+# Compare Both Clump and Original Scale weights to Observed Height in PGP
+
+```{r read in predicted height and filter pheno}
+clump_height <- readRDS(dir %&% "PGP_skeletal_muscle_predicted_height_clump.RDS")
+original_scale_height <- readRDS(dir %&% "PGP_skeletal_muscle_predicted_height_original_scale.RDS")
+
+n_genes_clump <- readRDS(dir %&% "n_genes_height_clump.RDS")
+n_genes_original <- readRDS(dir %&% "n_genes_height_orig_scale.RDS")
+pheno <- read_tsv(DATA %&% "phenodata.txt") %>% dplyr::select(c(IID, height)) 
+```
+```{r caclulate corr btw observed and pred height in PGP}
+tempo_clump <- clump_height[na.omit(match(pheno$IID, rownames(clump_height))), ]
+tempo_orig <- original_scale_height[na.omit(match(pheno$IID, rownames(original_scale_height))), ]
+
+PGP_height_clump <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n.genes = numeric())
+PGP_height_orig <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n.genes = numeric())
+
+for(i in 1:ncol(tempo_clump)){
+  PGP_height_clump[i,1] <- cor.test(pheno$height, tempo_clump[,i])$estimate
+  PGP_height_clump[i,2] <- cor.test(pheno$height, tempo_clump[,i])$p.value
+  PGP_height_clump[i,3] <- colnames(tempo_clump)[i]
+  PGP_height_clump[i,4] <- n_genes_clump[i]
+}
+
+for(i in 1:ncol(tempo_orig)){
+  PGP_height_orig[i,1] <- cor.test(pheno$height, tempo_orig[,i])$estimate
+  PGP_height_orig[i,2] <- cor.test(pheno$height, tempo_orig[,i])$p.value
+  PGP_height_orig[i,3] <- colnames(tempo_orig)[i]
+  PGP_height_orig[i,4] <- n_genes_original[i]
+}
+
+```
+
+```{r plot performance}
+p1 = ggplot(PGP_height_orig, aes(n.genes, estimate)) + geom_point(color = "magenta", position="jitter") + geom_line(color = "magenta") + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + ylim(c(0,0.18)) + ggtitle("Performance for Height in Personal Genomes vs Predicted Height using original scale weights")
+```
+
+# Compare to Individual Level PTRS 
+```{r filenames, eval=FALSE }
+weight.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/weight_files/elastic_net_alpha_0.1_British.export_model/"
+```
+
+
+```{r read in weights and expression, eval=FALSE}
+weights <- read_tsv(weight.dir %&% "weights.height.tsv.gz")
+
+# Here we use predicted expression not predicted and make sure to use human ensembl id gene name
+pred_expr <- read_tsv(data.dir %&% "PTRS_weights/PGP/PGP_skeletal_muscle__predict.txt") %>% select(-c(FID))
+```
+
+
+```{r inner join all genes, eval=FASLE}
+#Do inner join of all genes in weight and expression files - 4630 genes in common between the two
+rownames(weights) <- weights$gene_id
+weights <- weights[intersect(colnames(pred_expr), weights$gene_id), ]
+expr <- pred_expr[, intersect(colnames(pred_expr), weights$gene_id)]
+expr <- expr %>%  mutate(ID = pred_expr$IID, .before = colnames(expr)[1])
+```
+
+```{r calculate predicted height in individual level PTRS, eval=FALSE}
+fn_generate_trait(expr, weights)
+```
+
+# Check Predicted to Observed Height using Individual PTRS
+
+```{r read in pred height}
+pred_height <- readRDS(dir %&% "PGP_pred_height_indiv_PTRS.RDS")
+weights_height <-  readRDS("/Users/natashasanthanam/Downloads/weights.height.annot.RDS")
+
+n_genes = as.matrix(apply(weights_height, 2, function(x) sum(x != 0 )))
+```
+
+```{r calculate corr}
+tempo <- pred_height[na.omit(match(pheno$IID, rownames(pred_height))), ]
+PGP_height <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n.genes = numeric())
+ 
+for(i in 1:ncol(tempo)){
+  PGP_height[i,1] <- cor.test(pheno$height, tempo[,i])$estimate
+  PGP_height[i,2] <- cor.test(pheno$height, tempo[,i])$p.value
+  PGP_height[i,3] <- colnames(tempo)[i]
+  PGP_height[i,4] <- n_genes[i]
+}
+```
+
+```{r plot performance}
+p2 = ggplot(PGP_height, aes(n.genes, estimate)) + geom_point(color = "darkblue", position="jitter") + geom_line(color = "darkblue") + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + ylim(c(0,0.18)) + ggtitle("Performance for Height in Personal Genomes vs Predicted Height using individual PTRS")
+
+ggarrange(p1, p2, ncol = 2, nrow = 1)
+```

@@ -1,0 +1,276 @@
+---
+title: "Mice_heritability_estimate"
+author: "Natasha Santhanam"
+date: "3/19/2021"
+output: html_document
+---
+
+Calculate heritability for gene expression in mice using Pancreatic Islet Gene expression from DODB
+
+#Load modules
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(RSQLite)
+library(biomaRt)
+"%&%" = function(a,b) paste(a,b,sep="")
+data_dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+box_dir <- "/Users/natashasanthanam/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/DODB/"
+```
+
+```{r}
+mice_geno <- read_csv(box_dir %&% "Attie-232_Attie_DO_Islets-GigaMUGA-calls.csv")
+mice_pheno <- read.table(box_dir %&% "Attie_232_Attie_DO_Islets__expr_norm.txt" )
+```
+
+Generate MAP/Ped format for plink
+#MAP
+```{r}
+mice_geno <- mice_geno[,c("marker","chr","pos", intersect(colnames(mice_geno), rownames(mice_pheno)))]
+mice_pheno <- mice_pheno[intersect(colnames(mice_geno), rownames(mice_pheno)),]
+
+MAP <- mice_geno %>% cbind(CM = 0)%>% select(c(chr, marker, CM, pos))
+rownames(mice_geno) <- mice_geno$marker
+
+MAP <- MAP %>% filter(is.na(chr) == FALSE)
+write_tsv(MAP, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/mice_pancreas.map", col_names = FALSE)
+```
+
+#PED
+```{r}
+geno_abr <- mice_geno[, 4:length(mice_geno)]
+rownames(geno_abr) <- mice_geno$marker
+
+#Transpose genotype file into matrix format and replace all missing values with NA
+geno_abr <- t(geno_abr)
+geno_abr[geno_abr == "--"] <- NA
+table(rownames(geno_abr)==rownames(mice_pheno))
+table(colnames(geno_abr)==mice_geno$marker)
+PED = geno_abr[, c(intersect(colnames(geno_abr), MAP$marker))]
+ 
+PED6 <- data.frame(
+  FID = rownames(PED),
+  IID = rownames(PED),
+  FatherID = 0,
+  MotherID = 0,
+  Sex = 1,
+  Phenotype = 1)
+
+PED <- cbind(PED6, PED)
+write_tsv(PED, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/mice_pancreas.ped",col_names = FALSE)
+```
+
+#Convert to plink bed/bim/fam
+```{bash, eval=FALSE}
+plink --file mice_geno --make-bed --missing-code NA  --out mice_geno
+```
+
+#Convert ped file to ged 
+#then convert ged to bimbam format for GEMMA
+```{bash, eval = FALSE}
+gtool -P --ped mice_geno.ped --map mice_geno.map --og mice_DBOB.gen 
+
+cat mice_DBOB.gen  | awk -v s= 288 '{ printf $2 "," $4 "," $5; for(i=1; i<=s; i++) printf "," $(i*3+3)*2+$(i*3+4); printf "\n" }' > mice_DBOB
+```
+
+
+#phenotype file
+```{r}
+pheno_abr <- cbind(FID = rownames(mice_pheno), IID = rownames(mice_pheno), mice_pheno) 
+write_tsv(pheno_abr, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/mice_pheno.txt",col_names = FALSE)
+```
+
+#GCTA 
+
+#calculate GRM; do this in CRI
+```{r}
+gt.dir <- "/scratch/nsanthanam1/DOB_data/snp_lists/"
+grm.dir <- "/scratch/nsanthanam1/DOB_data/GRMs/"
+h2.dir <- "/scratch/nsanthanam1/DOB_data/h2/"
+pheno.dir <- "/scratch/nsanthanam1/DOB_data/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/DBOB_data/"
+
+ensidlist <- colnames(mice_pheno)
+bim <- read.table(ge.dir %&% "mice_pancreas.bim")
+gtf <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/mice_pancreas_gtf.txt", col_names =TRUE)
+#Make local GRMs for each gene
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$gene_id),]
+    chr <- geneinfo[1]
+    c <- chr$chr
+    start <- geneinfo$start - 1e6 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$end + 1e6 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bim,bim[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,4]>=start & chrsnps[,4]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,2]    
+    write.table(snplist, file= gt.dir %&% "mice.pancreas.SNPlist",quote=F,col.names=F,row.names=F)
+    runGCTAgrm <- "gcta --bfile " %&%  ge.dir %&% "mice_pancreas --make-grm-bin --extract " %&% gt.dir %&% "mice.pancreas.SNPlist" %&% " --out " %&% grm.dir %&%  gene
+    system(runGCTAgrm)
+}
+```
+
+# Calculate GRM - per chromosomes
+```{r}
+gt.dir <- "/scratch/nsanthanam1/DOB_data/snp_lists/"
+grm.dir <- "/scratch/nsanthanam1/DOB_data/chr_GRMs/"
+h2.dir <- "/scratch/nsanthanam1/DOB_data/chr_h2/"
+pheno.dir <- "/scratch/nsanthanam1/DOB_data/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/DBOB_data/"
+
+ensidlist <- colnames(mice_pheno)[3:ncol(mice_pheno)]
+bim <- read.table(ge.dir %&% "mice_pancreas.bim")
+gtf <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/mice_pancreas_gtf.txt", col_names =TRUE)
+#Make local GRMs for each gene
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$ensembl_gene_id),]
+    chr <- geneinfo[2]
+    c <- chr$chromosome_name
+    chrsnps <- subset(bim,bim[,1]==c) ### pull snps on same chr
+    snplist <- chrsnps[,2]    
+    write.table(snplist, file= gt.dir %&% "mice.pancreas.SNPlist",quote=F,col.names=F,row.names=F)
+    runGCTAgrm <- "gcta --bfile " %&%  ge.dir %&% "mice_pancreas --make-grm-bin --extract " %&% gt.dir %&% "mice.pancreas.SNPlist" %&% " --out " %&% grm.dir %&% "chr_h2_" %&% gene
+    system(runGCTAgrm)
+}
+```
+
+#cis-GRM 15 mb
+```{r}
+gt.dir <- "/scratch/nsanthanam1/DOB_data/snp_lists/"
+grm.dir <- "/scratch/nsanthanam1/DOB_data/cis_GRM/"
+h2.dir <- "/scratch/nsanthanam1/DOB_data/cis_h2/"
+pheno.dir <- "/scratch/nsanthanam1/DOB_data/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/DBOB_data/"
+
+ensidlist <- colnames(mice_pheno)
+bim <- read.table(ge.dir %&% "mice_pancreas.bim")
+gtf <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/mice_pancreas_gtf.txt", col_names =TRUE)
+#Make local GRMs for each gene
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$ensembl_gene_id),]
+    chr <- geneinfo[2]
+    c <- chr$chromosome_name
+    start <- geneinfo$start_position - 1.5e7 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$end_position + 1.5e7 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bim,bim[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,4]>=start & chrsnps[,4]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,2]    
+    write.table(snplist, file= gt.dir %&% "mice.pancreas.SNPlist",quote=F,col.names=F,row.names=F)
+    runGCTAgrm <- "gcta --bfile " %&%  ge.dir %&% "mice_pancreas --make-grm-bin --extract " %&% gt.dir %&% "mice.pancreas.SNPlist" %&% " --out " %&% grm.dir %&%  gene
+    system(runGCTAgrm)
+}
+```
+
+
+#Calculate h2
+```{r}
+files <- list.files(path = grm.dir, pattern = ".grm.id", full.names = TRUE)
+for(i in 1:length(files)){
+	cat(i,"of",length(files),"\n")
+	ensid <- sapply(strsplit(sapply(strsplit(files[i],"/"), `[`, 7),"\\."), `[`, 1)
+	#output expression pheno for gcta
+	geneexp <- cbind(mice_pheno[,1],mice_pheno[,2],mice_pheno[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% ensid, col.names=F, row.names = F, quote=F) #output pheno for gcta
+	## Y ~ localGRM
+	runLOC <- "gcta --grm " %&% grm.dir %&% ensid %&% " --reml --pheno " %&% pheno.dir %&% "tmp.pheno." %&% ensid %&% " --out " %&% h2.dir %&% "tmp." %&% ensid
+	system(runLOC)
+}
+```
+
+
+
+#multi GRM version of GCTA GRM for each chromosome
+```{bash}
+for i in {1..22}
+do 
+gcta --bfile /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/DBOB_data/mice_pancreas --chr $i --make-grm --out mice_pancreas_chr$i
+done
+```
+
+```{r}
+grm.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/multi_grm/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/DBOB_data/"
+h2.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/multi_h2/"
+
+for(i in 1:length(colnames(mice_pheno))){
+ensid <- ensid <- colnames(mice_pheno)[i]
+runLOC <- "gcta --mgrm " %&% grm.dir %&% "multi_grm.txt" %&% " --reml --pheno " %&% ge.dir %&% "mice_panc_pheno.txt" %&% " --reml-lrt 1" %&%  " --mpheno " %&% i %&% " --out " %&% h2.dir %&% "tmp." %&% ensid %&% " --thread-num 4"
+	system(runLOC)
+}
+```
+
+#Figurecs 
+
+#read in heritability estiamtes from GCTA
+```{r}
+mice_h2 <- read_tsv(data_dir %&% "DOB_chr_h2.txt", col_names = FALSE)
+colnames(mice_h2) <- c("ensembl_gene_id", "h2", "se")
+mice_h2$ensembl_gene_id <- sapply(strsplit(mice_h2$ensembl_gene_id,"\\."), `[`, 2)
+```
+
+#check correlation to predicted R2 from Dan Cox's models
+```{r}
+mice_r2 <- read_tsv(data_dir %&% "mice_predicatibility.txt", col_names = TRUE)
+colnames(mice_r2)[1] = "ensembl_gene_id"
+mice_DOB_complete <- inner_join(mice_h2, mice_r2, by = "ensembl_gene_id")
+cor.test(mice_DOB_complete$h2, mice_DOB_complete$pred.perf.R2)
+```
+
+
+#Change ENSID to gene name for mice and do same for rats so can compare
+#mice
+```{r}
+listEnsembl()
+ensembl <- useEnsembl(biomart = "genes")
+datasets <- listDatasets(ensembl)
+ensembl <- useEnsembl(biomart = "ensembl", 
+                   dataset = "mmusculus_gene_ensembl", 
+                   mirror = "asia")
+
+genes <-  as.data.frame(mice_h2$ensembl_gene_id)
+
+gene_IDs <- getBM(attributes= c('external_gene_name', 'ensembl_gene_id'), 
+      filters = '', 
+      values = genes, 
+      mart = ensembl)
+
+mice_annot <- left_join(mice_h2, gene_IDs, by = "ensembl_gene_id")
+```
+
+#rats
+```{r}
+rat_Lh_h2 <- read_tsv(data_dir %&% "Lh_h2.txt", col_names = FALSE)
+colnames(rat_Lh_h2) <- c("ensembl_gene_id", "h2", "se")
+rat_Lh_h2$ensembl_gene_id = sapply(strsplit(rat_Lh_h2$ensembl_gene_id ,"\\."), `[`, 2)
+
+ensembl <- useEnsembl(biomart = "genes")
+datasets <- listDatasets(ensembl)
+ensembl <- useEnsembl(biomart = "ensembl", 
+                   dataset = "rnorvegicus_gene_ensembl", 
+                   mirror = "asia")
+
+genes <-  as.data.frame(rat_Lh_h2$ensembl_gene_id)
+
+gene_IDs <- getBM(attributes= c('external_gene_name', 'ensembl_gene_id'), 
+      filters = '', 
+      values = genes, 
+      mart = ensembl)
+
+rat_annot <- left_join(rat_Lh_h2, gene_IDs, by = "ensembl_gene_id")
+```
+
+Correlation between the two 
+```{r}
+mice_rat <- inner_join(mice_annot, rat_annot, by = "external_gene_name")
+cor.test(mice_rat$h2.x, mice_rat$h2.y)
+```
+
+
+
+
+

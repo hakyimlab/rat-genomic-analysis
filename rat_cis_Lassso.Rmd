@@ -1,0 +1,127 @@
+---
+title: "rat_cis_Lasso"
+author: "Natasha Santhanam"
+date: "10/5/2021"
+output: html_document
+---
+
+```{r}
+suppressMessages(library(dplyr))
+suppressMessages(library(glmnet))
+suppressMessages((library(reshape2)))
+suppressMessages(library(methods))
+suppressMessages(library(RSQLite))
+"%&%" <- function(a,b) paste(a,b, sep = "")
+
+dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/"
+source("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/cis_Lasso/run_cis_Lasso.R")
+```
+
+#Convert genotype file to Plink 2 pgen format
+```{bash, eval=FALSE}
+plink --file rat_genotype_Ac --make-bed --out rat_genotype_Ac
+plink2 --bfile rat_genotype_Ac --make-pgen vzs --out rat_geno_Ac_pgen
+```
+
+```{r create separate txt files for each rxn}
+pheno <- readRDS("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/expression/Ac_expression_transformed.RDS")
+#scale pheno 
+scale_pheno <-  scale(pheno, center = TRUE, scale = TRUE)
+
+ids <- colnames(scale_pheno)
+df <- data.frame(ids)
+n = 50 #number of groups
+split <- df %>% group_by(row_number() %/% n) %>% group_map(~ .x)
+
+for(i in 1:length(split)) {
+  tempo <- data.frame(split[i])
+  write_tsv(tempo, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/cis_Lasso/phenos/" %&% "phenolist"  %&% i %&% ".txt", col_names = FALSE)
+}
+```
+
+```{bash run cis Lasso, eval=FALSE}
+#!/bin/bash
+
+#PBS -N cis_Lasso_rats_Ac
+#PBS -S /bin/bash
+#PBS -l walltime=48:00:00
+#PBS -l mem=64gb
+#PBS -l nodes=1:ppn=4
+
+# SPECIFY LOGGING BEHAVIOR
+
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/psychENCODE/scripts/cis_Lasso_rats_Ac.out
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/psychENCODE/scripts/cis_Lasso_rats_Ac.err
+
+module load gcc/6.2.0 
+module load python/3.8.1
+#module load miniconda3/4.7.10
+
+source ~/.bashrc
+conda activate /gpfs/data/im-lab/nas40t2/festus/my_envs/snpnet
+
+echo "`date` Starting"
+
+Rscript /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/cis_Lasso/run_cis_Lasso.R \
+--phenotype_table /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/expression/scaled_Ac_expression_transformed.txt \
+--genotype /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/rat_geno_Ac_pgen \
+--pheno_list /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/cis_Lasso/phenos/phenolist${chk}.txt \
+--snpnet_config /gpfs/data/im-lab/nas40t2/festus/metabolomics/guardian/MetaboXcan/scripts/gw_lasso/snpnet_config.yaml \
+--gene_annot /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/snp_annot_by_chr/gene_annotation.RDS \
+--snp_annot /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/snp_annot_by_chr/snp_annotation.RDS \
+--indiv_col IID \
+--nfold 5 \
+--inner_nfold 5 \
+--mode cv_performance \
+--output_prefix /scratch/nsanthanam1/cis_Lasso/cis_Rat_lasso_perf.${chk}
+
+Rscript /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/cis_Lasso/run_cis_Lasso.R \
+--phenotype_table /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/expression/scaled_Ac_expression_transformed.txt \
+--genotype /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/rat_geno_Ac_pgen \
+--pheno_list /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/cis_Lasso/phenos/phenolist${chk}.txt \
+--snpnet_config /gpfs/data/im-lab/nas40t2/festus/metabolomics/guardian/MetaboXcan/scripts/gw_lasso/snpnet_config.yaml \
+--gene_annot /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/snp_annot_by_chr/gene_annotation.RDS \
+--snp_annot /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/snp_annot_by_chr/snp_annotation.RDS \
+--indiv_col IID \
+--nfold 5 \
+--inner_nfold 5 \
+--mode model_training \
+--output_prefix /scratch/nsanthanam1/cis_Lasso/cis_Rat_lasso_weights.${chk}
+```
+
+```{bash submit jobs for all phenos, eval=FALSE}
+for i in {2..306}; do qsub -v chk=${i} cis_Lasso_Ac.pbs ; done
+```
+
+#aggregate all chunks for performance
+```{r aggregate across all genes}
+filelist <- list.files("/scratch/nsanthanam1/cis_Lasso/", pattern = ".performance.tsv", full.names = TRUE)
+cis_lasso_R2 <- data.frame()
+
+for(fila in filelist) {
+  tempo <- read_tsv(fila, col_names = TRUE)
+  cis_lasso_R2 <- rbind(tempo, cis_lasso_R2)
+}
+#write_tsv(cis_lasso_R2, "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/cis_Lasso/Ac_cis_Lasso_doublenested_perf.txt", col_names = TRUE)
+```
+
+
+
+#check correlation between R2 in Lasso and that from PredictDB tutorial
+```{r}
+cis_lasso_R2 <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Ac_cis_Lasso_doublenested_perf.txt", col_names = TRUE) %>% rename(gene = phenotype)
+
+filename <- "/Users/natashasanthanam/Box/imlab-data/data-Github/rat-genomic-analysis/sql/Ac_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+elasticnet_R2 <- dbGetQuery(conn, 'select * from extra')
+dbDisconnect(conn)
+```
+
+```{r}
+EN_lasso <- inner_join(cis_lasso_R2, elasticnet_R2, by = "gene")
+cor.test(EN_lasso$R2.x, EN_lasso$R2.y)
+
+ggplot(EN_lasso, aes(R2.y, R2.x)) + geom_point() + xlab("Single nested R2 from Elastic Net") + ylab("Double nested R2 from Lasso") + geom_abline()
+```
+

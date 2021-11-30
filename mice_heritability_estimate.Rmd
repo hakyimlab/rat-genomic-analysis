@@ -1,0 +1,240 @@
+---
+title: "Mice_heritability_estimate"
+author: "Natasha Santhanam"
+date: "3/19/2021"
+output: html_document
+---
+
+Calculate heritability for gene expression in mice using Prefrontal Cortex Gene expression from Palmer Lab
+
+#Load modules
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(RSQLite)
+library(vroom)
+library(corrplot)
+
+"%&%" = function(a,b) paste(a,b,sep="")
+data_dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+box_dir <- "/Users/natashasanthanam/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/Data-From-Abe-Palmer-Lab/G50-56_LGxSM_AIL_GWAS/"
+```
+
+```{r}
+mice_geno <- vroom(box_dir %&% "ail.genos.ATGC.gwasSNPs.txt", col_names = FALSE)
+rsid_map <-  read_tsv(box_dir %&% "AIL.gwasSNPs.rsids.txt", col_names = FALSE)
+mice_expression <- read.table(box_dir %&% "strNormCounts.expr.txt", row.names = 1)
+mice_pheno <- vroom(box_dir %&% "ail.phenos.final.txt", col_names = TRUE)
+```
+
+Generate MAP/Ped format for plink
+#MAP
+```{r}
+MAP <- rsid_map %&% mutate(CM = 0) %&% select(c(X1, X2, CM, X3))
+colnames(MAP) = c("chr", "id", "CM", "pos")
+
+# MAP <- MAP %>% filter(is.na(chr) == FALSE)
+write_tsv(MAP, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/mice_geno.map", col_names = FALSE)
+```
+
+#PED
+```{r}
+geno_abr <- mice_geno[, 5:length(mice_geno)]
+geno_abr = sapply(geno_abr[,1:1063], function(x) paste(substr(x, 1, 1),substr(x, 3, 3), sep = " " ))
+
+#Transpose genotype file into matrix format and replace all missing values with NA
+geno_abr <- t(geno_abr)
+rownames(geno_abr) = mice_pheno$id
+
+
+
+PED6 <- data.frame(
+  FID = rownames(geno_abr),
+  IID = rownames(geno_abr),
+  FatherID = 0,
+  MotherID = 0,
+  Sex = 1,
+  Phenotype = 1)
+
+PED <- cbind(PED6, geno_abr)
+vroom_write(PED, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/mice_geno.ped", delim = "\t", col_names = FALSE)
+```
+
+#Convert to plink bed/bim/fam
+```{bash, eval=FALSE}
+awk '{print (NF - 6)/2}' mice_geno.ped | head -1 
+wc -l mice_geno.map
+
+plink --file mice_geno --make-bed --out mice_geno
+```
+
+#phenotype file
+```{r}
+pheno_abr <- cbind(FID = rownames(mice_expression), IID = rownames(mice_expression), mice_expression) 
+vroom_write(pheno_abr, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/mice_pheno.txt", delim = "\t", col_names = FALSE)
+```
+
+#Generate gtf file
+```{r}
+genes <-  as.data.frame(colnames(mice_expression))
+
+ensembl <- useEnsembl(biomart = "genes")
+ensembl <- useEnsembl(biomart = "ensembl", 
+                   dataset = "mmusculus_gene_ensembl", 
+                   mirror = "useast")
+
+gene_IDs_mice <- getBM(attributes= c('external_gene_name', 'ensembl_gene_id', 'chromosome_name', 'start_position', 'end_position'), 
+      filters = '', 
+      values = genes, 
+      mart = ensembl)
+
+write_tsv(gene_IDs_mice, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/mice_gtf.txt", col_names = TRUE)
+```
+
+
+#GCTA 
+```{r}
+gt.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GCTA_files/snp_lists/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/plink_files/"
+grm.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GCTA_files/GRMs/"
+pheno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GCTA_files/phenotype_files/"
+h2.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/h2_str_output/"
+
+
+ensidlist <- colnames(pheno_abr)[3:length(colnames(pheno_abr))]
+bimfile <- ge.dir %&% "mice_plink.bim"
+bim <- read.table(bimfile)
+rownames(bim) <- bim$V2
+gtf <- read_tsv(data_dir %&% "mice_gtf.txt", col_names = TRUE)
+```
+
+```{r}
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$external_gene_name),]
+    chr <- geneinfo[3]
+    start <- geneinfo$start_position - 1e6 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$end_position + 1e6 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bim,bim[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,4]>=start & chrsnps[,4]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,2]    
+    write.table(snplist, file= gt.dir %&% "tmp.mice.SNPlist" %&% gene ,quote=F,col.names=F,row.names=F)
+    runGCTAgrm <- "gcta --bfile " %&%  ge.dir %&% "mice_plink --make-grm-bin --extract " %&% gt.dir %&% "tmp.mice.SNPlist" %&% gene %&% " --out " %&% grm.dir %&%  gene
+    system(runGCTAgrm)
+}
+
+ grm.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/GCTA_files/GRMs/"
+ files <- list.files(path = grm.dir, pattern = "grm.N.bin", full.names = TRUE)
+ ensidlist = sapply(strsplit(sapply(strsplit(files, "/"), `[`, 12), "\\."), `[`, 1)
+
+#Calculate h2
+for(i in 1:length(ensidlist)){
+	cat(i,"of",length(ensidlist),"\n")
+	gene <- ensidlist[i]
+	#output expression pheno for gcta
+	geneexp <- cbind(rownames(mice_expression),rownames(mice_expression),mice_expression[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% gene, col.names=F, row.names = F, quote=F) #output pheno for gcta
+	## Y ~ localGRM
+	runLOC <- "gcta --grm " %&% grm.dir %&% gene %&% " --reml --pheno " %&% pheno.dir %&% "tmp.pheno." %&% gene %&% " --out " %&% h2.dir %&% "tmp." %&% gene
+	system(runLOC)
+}
+```
+
+#Ran BSLMM for all cis regions in Mice_BSLMM.Rmd
+
+#Figures 
+
+#read in heritability estiamtes from GCTA
+
+#Check 
+```{r}
+mice_h2 <- read_tsv(data_dir %&% "mice_PVE_est.txt", col_names = FALSE)
+colnames(mice_h2) <- c("external_gene_name", "PVE", "cred_set_1", "cred_set_2")
+
+# mice_h2$external_gene_name <- sapply(strsplit(sapply(strsplit(mice_h2$external_gene_name, "\\."), `[`, 2), "\\."), `[`, 1)
+```
+
+#rats - get gene names so we can compare
+```{r}
+rat_h2 <- read_tsv(data_dir %&% "Lh_PVE_estimates.txt", col_names = FALSE)
+colnames(rat_h2) <- c("ensembl_gene_id", "PVE", "cred_set_1", "cred_set_2")
+# rat_h2$ensembl_gene_id <- sapply(strsplit(sapply(strsplit(rat_h2$ensembl_gene_id, "\\."), `[`, 2), "\\."), `[`, 1)
+
+ensembl <- useEnsembl(biomart = "genes")
+ensembl <- useEnsembl(biomart = "ensembl", 
+                   dataset = "rnorvegicus_gene_ensembl", 
+                   mirror = "asia")
+	
+
+genes <-  as.data.frame(rat_h2$ensembl_gene_id)
+
+gene_IDs_rat <- getBM(attributes= c('external_gene_name', 'ensembl_gene_id'), 
+      filters = '', 
+      values = genes, 
+      mart = ensembl)
+
+rat_annot <- left_join(rat_h2, gene_IDs_rat, by = "ensembl_gene_id")
+```
+
+Correlation between the two 
+```{r}
+mice_rat <- na.omit(inner_join(mice_h2, rat_annot, by = "external_gene_name"))
+
+cor.test(mice_rat$PVE.y, mice_rat$PVE.x)
+```
+
+Read in Humans and Baboons and get inner join across all
+```{r}
+babboon <- read.table(data_dir %&% "baboon_heritability_estimates.txt")
+colnames(babboon) <- c("external_gene_name", "h2_baboon")
+
+human_h2 <- read_csv(data_dir %&% "human_h2.csv")
+colnames(human_h2) <- c("external_gene_name", "ensid", "h2_human", "ci", "r2")
+
+#match capitalization to humans and baboons
+mice_rat$external_gene_name <- toupper(mice_rat$external_gene_name)
+
+hum_baboon <- inner_join(human_h2, babboon, by = "external_gene_name")
+all_species <- inner_join(hum_baboon, mice_rat, by = "external_gene_name")
+
+all_species <- all_species %>% select(c(external_gene_name, h2_rats, h2_mice, h2_baboon, h2_human))
+write_tsv(all_species, dir %&% "all_animals_h2.txt", col_names = TRUE)
+```
+
+
+```{r}
+cor.matrix <- matrix(c(1, 0.0288682  , 0.01217997 , -0.01944203  , 0.0288682, 1, 0.05168358, 0.01112157   ,0.01217997 , 0.05168358  , 1, 0.1283756  , -0.01944203 ,  0.01112157   , 0.1283756  , 1), nrow = 4, ncol = 4)
+rownames(cor.matrix) <- c("mice", "rat", "human", "baboon")
+colnames(cor.matrix) <- c("mice", "rat", "human", "baboon")
+
+corrplot(cor.matrix,  method="color")
+```
+
+
+Do cis-heritability rat figures
+```{r}
+load_herit <- function(df){
+  df$CI_width <- df$se * 1.96
+  df <- df[order(df$h2),]
+  df$index <- 1:nrow(df)
+  return(df)
+}
+
+A_df_mice <- load_herit(mice_h2)
+plt_1 <- (ggplot(data = A_df_mice, aes(x = index))
+          + geom_ribbon(aes(ymax = h2 + CI_width, ymin = h2 - CI_width),
+                         alpha = 0.25)
+          # + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = h2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "Ac")
+          + ylim(-0.5,1)
+          + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.01140579", size = 2))
+
+plt_1
+```
+
+

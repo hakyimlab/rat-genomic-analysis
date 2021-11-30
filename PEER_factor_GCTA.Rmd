@@ -1,0 +1,203 @@
+---
+title: "PEER_factor_GCTA"
+author: "Natasha Santhanam"
+date: "5/26/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(devtools)
+library(broom)
+library(data.table)
+library(biomaRt)
+"%&%" = function(a,b) paste(a,b,sep="")
+data.dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+box.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/DBOB_data/"
+```
+
+Script to run genomewide GCTA with PEER Factor expression 
+
+```{bash}
+# command to calculate genome wide GRM 
+gcta --bfile /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/DBOB_data/mice_pancreas --make-grm-bin --out mice_pancreas
+```
+
+```{r}
+mice_pheno <- readRDS("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/prediction_pipeline/mice_expression_DDOB_transformed.RDS")
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/"
+h2.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/h2_files/"
+
+
+for(i in 1:length(colnames(mice_pheno))){
+ensid <- ensid <- colnames(mice_pheno)[i]
+runLOC <- "gcta --grm " %&% ge.dir %&% "mice_pancreas" %&% " --reml --pheno " %&% ge.dir %&% "mice_pheno_PEER.txt" %&%  " --mpheno " %&% i %&% " --out " %&% h2.dir %&% "tmp." %&% ensid
+        system(runLOC)
+}
+```
+
+```{r}
+# Ran genome-wide GCTA with PEER transformed expression data
+peer_h2 <- read_tsv( data.dir %&% "mice_PEER_gw_h2.txt", col_names = TRUE)
+rat_Ac_h2 <- read_tsv(data.dir %&% "Ac_h2_annot.txt", col_names = TRUE)
+mice_r2 <- read_tsv(data.dir %&% "mice_predicatibility.txt", col_names = TRUE)
+```
+
+```{r}
+#correlation between predictability and PEER factor geno-mewide h2
+tempo <- inner_join(peer_h2, mice_r2, by = "gene")
+cor.test(tempo$H2, tempo$pred.perf.R2, method = "spearman")
+ggplot(tempo, aes(H2, pred.perf.R2)) + geom_point() + geom_abline()
+```
+
+
+```{r}
+#load functions 
+load_herit <- function(df){
+  df$CI_width <- df$SE * 1.96
+  df <- df[order(df$H2),]
+  df$index <- 1:nrow(df)
+  return(df)
+}
+```
+
+
+```{r}
+#Graph of genome-wide heritibility
+A_df <- load_herit(tempo)
+plt_1 <- (ggplot(data = A_df, aes(x = index))
+          + geom_ribbon(aes(ymax = H2 + CI_width, ymin = H2 - CI_width),
+                         alpha = 0.25)
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = H2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "Genomewide Heritability using PEER Factor Adjusted Expression")
+          + ylim(-0.5,1)
+          + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.3047941", size = 2)
+          + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.3489596", size = 2))
+plt_1
+```
+
+```{r}
+#compare cis-heritability in Rat Ac Tissue to trans-heritability in mice with PEER factor adjusted expression
+
+#add ensembl annotation to mice data
+listEnsembl()
+ensembl <- useEnsembl(biomart = "genes")
+datasets <- listDatasets(ensembl)
+ensembl <- useEnsembl(biomart = "ensembl", 
+                   dataset = "mmusculus_gene_ensembl", 
+                   mirror = "uswest")
+
+genes <-  as.data.frame(peer_h2$gene)
+
+gene_IDs <- getBM(attributes= c('external_gene_name', 'ensembl_gene_id'), 
+      filters = '', 
+      values = genes, 
+      mart = ensembl)
+colnames(peer_h2)[1] = "ensembl_gene_id"
+peer_annot <- left_join(peer_h2, gene_IDs, by = "ensembl_gene_id")
+```
+
+```{r}
+mice_rat <- na.omit(inner_join(peer_annot, rat_Ac_h2, by = "external_gene_name"))
+cor.test(mice_rat$H2, mice_rat$h2)
+```
+
+Script for cis-heritability
+```{r}
+gt.dir <- "/scratch/nsanthanam1/DOB_data/snp_lists/"
+grm.dir <- "/scratch/nsanthanam1/DOB_data/PEER_GRM/"
+h2.dir <- "/scratch/nsanthanam1/DOB_data/PEER_h2/"
+pheno.dir <- "/scratch/nsanthanam1/DOB_data/phenotype_files/"
+
+ensidlist <- colnames(mice_pheno)
+bim <- read.table(box.dir %&% "mice_pancreas.bim")
+gtf <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/mice_expression/mice_pancreas/mice_pancreas_gtf.txt", col_names =TRUE)
+
+#Make local GRMs for each gene
+for(i in 12520:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$gene_id),]
+    chr <- geneinfo[1]
+    c <- chr$chr
+    start <- geneinfo$start - 1.5e7 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$end + 1.5e7 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bim,bim[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,4]>=start & chrsnps[,4]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,2]    
+    write.table(snplist, file= gt.dir %&% "mice.peer.cis.SNPlist",quote=F,col.names=F,row.names=F)
+    runGCTAgrm <- "gcta --bfile " %&%  box.dir %&% "mice_pancreas --make-grm-bin --extract " %&% gt.dir %&% "mice.peer.cis.SNPlist" %&% " --out " %&% grm.dir %&%  gene
+    system(runGCTAgrm)
+}
+```
+
+```{r}
+#calculate h2 in GCTA
+
+files <- list.files(path = grm.dir, pattern = ".grm.id", full.names = TRUE)
+for(i in 1:length(files)){
+	cat(i,"of",length(files),"\n")
+	ensid <- sapply(strsplit(sapply(strsplit(files[i],"/"), `[`, 7),"\\."), `[`, 1)
+	#output expression pheno for gcta
+	geneexp <- cbind(pheno_gcta$FID, pheno_gcta$IID, mice_pheno[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% ensid, col.names=F, row.names = F, quote=F) #output pheno for gcta
+	## Y ~ localGRM
+	runLOC <- "gcta --grm " %&% grm.dir %&% ensid %&% " --reml --pheno " %&% pheno.dir %&% "tmp.pheno." %&% ensid %&% " --out " %&% h2.dir %&% "tmp." %&% ensid
+	system(runLOC)
+}
+```
+
+
+#Figures for calculating cis-heritability with 15 mb with PEER Factor Adjusted Expression
+```{r}
+#read in cis heritability with peer factors
+peer_cis <- read_tsv(data.dir %&% "PEER_cis_15_h2.txt", col_names = TRUE)
+```
+
+
+```{r}
+#correlation between predictability and PEER factor geno-mewide h2
+cis_tempo <- inner_join(peer_cis, mice_r2, by = "gene")
+cor.test(cis_tempo$H2, cis_tempo$pred.perf.R2, method = "spearman")
+ggplot(cis_tempo, aes(H2, pred.perf.R2)) + geom_point() + geom_abline()
+```
+```{r}
+#ordered cis heritability plot with R2 overlayed
+B_df <- load_herit(cis_tempo)
+plt_2 <- (ggplot(data = B_df, aes(x = index))
+          + geom_ribbon(aes(ymax = H2 + CI_width, ymin = H2 - CI_width),
+                         alpha = 0.25)
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = H2))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by Heritability',
+                 y = 'Heritability',
+                 title = "15mb Cis Heritability using PEER Factor Adjusted Expression")
+          + ylim(-0.5,1)
+          + annotate("text", x = 1200, y = -0.2, label = "Mean h2 =  0.0336604", size = 2.5)
+          + annotate("text", x = 1200, y = -0.3, label = "Mean r2 =  0.3639153", size = 2.5))
+plt_2
+```
+
+```{r}
+#add ensembl annotation to cis heritability
+genes <-  as.data.frame(peer_cis$gene)
+
+gene_IDs <- getBM(attributes= c('external_gene_name', 'ensembl_gene_id'), 
+      filters = '', 
+      values = genes, 
+      mart = ensembl)
+colnames(peer_cis)[1] = "ensembl_gene_id"
+cis_annot <- left_join(peer_cis, gene_IDs, by = "ensembl_gene_id")
+```
+
+```{r}
+#compare cis heritability with that in Rat Ac tissue
+cis_comp <- na.omit(inner_join(cis_annot, rat_Ac_h2, by = "external_gene_name"))
+cor.test(cis_comp$H2, cis_comp$h2)
+```
+

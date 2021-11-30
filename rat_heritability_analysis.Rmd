@@ -1,0 +1,231 @@
+---
+title: "rat_heritability_analysis"
+author: "Natasha Santhanam"
+date: "2/23/2021"
+output: html_document
+---
+
+```{r}
+library(workflowr)
+library(tidyverse)
+library(glue)
+library(readxl)
+```
+
+
+Generating Raw Genotype files from Tyson's original analysis
+```{r}
+load("~/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/Data-From-Abe-Palmer-Lab/Rdata/genoGex.RData")
+```
+
+
+```{r}
+n = gexAc$EnsemblGeneID
+gexAc_transpose <- as.data.frame(t(gexAc[,-1]))
+colnames(gexAc_transpose) <- n
+
+n = gexIl$EnsemblGeneID
+gexIl_transpose <- as.data.frame(t(gexIl[,-1]))
+colnames(gexIl_transpose) <- n
+
+n = gexLh$EnsemblGeneID
+gexLh_transpose <- as.data.frame(t(gexLh[,-1]))
+colnames(gexLh_transpose) <- n
+
+n = gexPl$EnsemblGeneID
+gexPl_transpose <- as.data.frame(t(gexPl[,-1]))
+colnames(gexPl_transpose) <- n
+
+n = gexVo$EnsemblGeneID
+gexVo_transpose <- as.data.frame(t(gexVo[,-1]))
+colnames(gexVo_transpose) <- n
+```
+
+```{r}
+invnorm = function(x) {
+  if(is.null(dim(x))) res = invnorm.vector(x) else
+  res=apply(x,2,invnorm.vector)
+  res
+}
+invnorm.vector = function(x) {yy = rank(x)/(length(x)+1); qnorm(yy)}
+
+
+gexAc_transpose = invnorm(gexAc_transpose)
+
+gexIl_transpose = invnorm(gexIl_transpose)
+
+gexLh_transpose = invnorm(gexLh_transpose)
+
+gexPl_transpose = invnorm(gexPl_transpose)
+
+gexVo_transpose = invnorm(gexVo_transpose)
+```
+
+
+```{r}
+gtf$gene_type = sub(".*?gene_biotype(.*?);.*", "\\1", gtf$Attr)
+gtf$gene_name = sub(".*?gene_name(.*?);.*", "\\1", gtf$Attr)
+
+gene_annotation = subset(gtf, select = -c(Source, Feature, Score, Strand, Attr, Frame) )
+gene_annotation = gene_annotation[, c("Chr","Gene", "gene_name", "Start", "End", "gene_type" )]
+colnames(gene_annotation) = c("chr", "gene_id", "gene_name", "start", "end")
+rownames(gene_annotation) = gene_annotation$gene_id
+
+phyMap <- within(phyMap,  varID <- paste(Chr, Pos, Ref, Alt, sep="_"))
+rownames(phyMap) = phyMap$varID
+phyMap$rsid = phyMap$varID
+colnames(phyMap) = c("snp", "chr", "pos", "refAllele", "effectAllele", 'varID', "rsid")
+```
+
+```{r}
+rownames(geno) = rownames(phyMap)
+#write.table(geno, file = "./data/genotype.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+```
+
+```{r}
+geno_Ac = geno[,match(rownames(gexAc_transpose), colnames(geno))]
+geno_Il = geno[,match(rownames(gexIl_transpose), colnames(geno))]
+geno_Lh = geno[,match(rownames(gexLh_transpose), colnames(geno))]
+geno_Pl = geno[,match(rownames(gexPl_transpose), colnames(geno))]
+geno_Vo = geno[,match(rownames(gexVo_transpose), colnames(geno))]
+```
+
+```{r}
+write.table(geno_Ac, file = "./data/genotype_Ac.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+write.table(geno_Il, file = "./data/genotype_Il.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+write.table(geno_Lh, file = "./data/genotype_Lh.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+write.table(geno_Pl, file = "./data/genotype_Pl.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+write.table(geno_Vo, file = "./data/genotype_Vo.txt", sep = "\t", col.names = TRUE, row.names = TRUE)
+
+```
+
+Generating MAP/PED files for plink
+```{r}
+nIndividuals_Ac <- ncol(geno_Ac)
+nSNPs_Ac <- nrow(geno_Ac)
+
+MAP <- phyMap %>% rename( SNP = rsid, CHR = chr, BP = pos) %>% mutate(CM = 0) %>% select(c(CHR, SNP, CM, BP))
+write_tsv(MAP, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_genotype.map", col_names = FALSE)
+```
+
+
+PED
+```{r}
+PED6 <- data.frame(
+  FID = colnames(geno_Ac),
+  IID = colnames(geno_Ac),
+  FatherID = 0,
+  MotherID = 0,
+  Sex = 1,
+  Phenotype = 1)
+
+# convert 0,1,2 to genotypes, a bit tricky
+# make helper dataframe for matching alleles
+myAlleles <- data.frame(
+  AA = paste(phyMap$refAllele,phyMap$refAllele),
+  AB = paste(phyMap$refAllele, phyMap$effectAllele),
+  BB = paste(phyMap$effectAllele,phyMap$effectAllele) )
+   
+PEDsnps <- geno_Ac[,] + 1
+
+PEDsnpsAB <- 
+  sapply(seq(nSNPs_Ac), function(snp)
+    sapply(PEDsnps[snp, ], function(ind) myAlleles[snp, ind]))
+
+PED <- cbind(PED6, PEDsnpsAB)
+
+write_tsv(PED, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_genotype.ped",col_names = FALSE)
+```
+
+Repeat for other tissues ~ only need to change the rows
+```{r}
+PED_Il <- data.frame(FID = colnames(geno_Il), IID = colnames(geno_Il), FatherID = 0, MotherID = 0, Sex = 1, Phenotype = 1)
+PED_Lh <- data.frame(FID = colnames(geno_Lh), IID = colnames(geno_Lh), FatherID = 0, MotherID = 0, Sex = 1, Phenotype = 1)
+PED_Pl <- data.frame(FID = colnames(geno_Pl), IID = colnames(geno_Pl), FatherID = 0, MotherID = 0, Sex = 1, Phenotype = 1)
+PED_Vo <- data.frame(FID = colnames(geno_Vo), IID = colnames(geno_Vo), FatherID = 0, MotherID = 0, Sex = 1, Phenotype = 1)
+
+PEDsnps <- geno_Il[,] + 1
+PEDsnpsAB <- 
+  sapply(seq(nrow(geno_Il)), function(snp)
+    sapply(PEDsnps[snp, ], function(ind) myAlleles[snp, ind]))
+PED <- cbind(PED_Il, PEDsnpsAB)
+write_tsv(PED, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_genotype_Il.ped",col_names = FALSE)
+
+PEDsnps <- geno_Lh[,] + 1
+PEDsnpsAB <- 
+  sapply(seq(nrow(geno_Lh)), function(snp)
+    sapply(PEDsnps[snp, ], function(ind) myAlleles[snp, ind]))
+PED <- cbind(PED_Lh, PEDsnpsAB)
+write_tsv(PED, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_genotype_Lh.ped",col_names = FALSE)
+
+PEDsnps <- geno_Pl[,] + 1
+PEDsnpsAB <- 
+  sapply(seq(nrow(geno_Pl)), function(snp)
+    sapply(PEDsnps[snp, ], function(ind) myAlleles[snp, ind]))
+PED <- cbind(PED_Pl, PEDsnpsAB)
+write_tsv(PED, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_genotype_Pl.ped",col_names = FALSE)
+
+PEDsnps <- geno_Vo[,] + 1
+PEDsnpsAB <- 
+  sapply(seq(nrow(geno_Vo)), function(snp)
+    sapply(PEDsnps[snp, ], function(ind) myAlleles[snp, ind]))
+PED <- cbind(PED_Vo, PEDsnpsAB)
+write_tsv(PED, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_genotype_Vo.ped",col_names = FALSE)
+
+```
+
+
+
+```{r}
+test <- PEDsnpsAB[,1:10]
+test_df <- cbind(PED6, test)
+write_tsv(test_df, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/test.ped", col_names = FALSE)
+```
+
+Generating Phenotype file ~ We're using gene expression levels
+```{r}
+pheno_Ac <- cbind(FID = rownames(gexAc_transpose), IID = rownames(gexAc_transpose), gexAc_transpose)
+pheno_Il <- as.data.frame(cbind(FID = rownames(gexIl_transpose), IID = rownames(gexIl_transpose), gexIl_transpose))
+pheno_Lh <- as.data.frame(cbind(FID = rownames(gexLh_transpose), IID = rownames(gexLh_transpose), gexLh_transpose))
+pheno_Pl <- as.data.frame(cbind(FID = rownames(gexPl_transpose), IID = rownames(gexPl_transpose), gexPl_transpose))
+pheno_Vo <- as.data.frame(cbind(FID = rownames(gexVo_transpose), IID = rownames(gexVo_transpose), gexVo_transpose))
+
+
+write_tsv(pheno_Ac, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_pheno_Ac.txt", col_names = FALSE)
+write_tsv(pheno_Il, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_pheno_Il.txt", col_names = FALSE)
+write_tsv(pheno_Lh, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_pheno_Lh.txt", col_names = FALSE)
+write_tsv(pheno_Pl, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_pheno_Pl.txt", col_names = FALSE)
+write_tsv(pheno_Vo, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_pheno_Vo.txt", col_names = FALSE)
+```
+
+
+Convert MAP/PED files to plink (Did this 5X for all tissues)
+```{bash, eval=FALSE}
+plink --file rat_genome --make-bed --out rat_genome
+```
+
+
+Check Heritability for each tissue
+```{r}
+h2_Ac <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Ac_h2.txt", col_names = FALSE)
+colnames(h2_Ac) <- c("phenotype", "H2", "SE")
+hist(h2_Ac$H2)
+
+pval_Ac <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Ac_pval.txt", col_names = FALSE)
+colnames(pval_Ac) <- c("phenotype", "pval", "SE")
+hist(pval_Ac$pval)
+
+#join pvalue with h2 and then only plot those with pvalues < 0.5
+# read GRM (it's in binary) and then plot values and see how related they are (off-diagnol)
+```
+```{r}
+Ac_6_gemma <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/Ac_bslmm_1.hyp.txt")
+hist(Ac_6_gemma$h)
+quantile(Ac_6_gemma$h, (0:40)/40)
+
+```
+read each .hyp file for all the genes and save these values 
+22.5% 50% 97.5%
+
+add min/max
+

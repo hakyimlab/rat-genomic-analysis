@@ -1,0 +1,85 @@
+---
+title: "GEMMA_badger"
+author: "Natasha Santhanam"
+date: "3/5/2021"
+output: html_document
+---
+
+Badger script to run in CRI
+
+```{bash, eval=FALSE}
+---
+definitions:
+
+  # command and template must always be specified.
+  command: gemma
+  template: /gpfs/data/im-lab/nas40t2/Github/badger/examples/PBS_example_template.jinja
+
+  copy_to_item: true
+
+  default_arguments:
+    job_memory: "4gb"
+    job_walltime: "6:00:00"
+    logs_folder: /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/logs
+    setup: "module load gcc/6.2.0 \n module load gemma/0.94 \n cd /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac "
+
+  # This specifies what the script does once an individual file is generated.
+  submission:
+    !PBSQueue
+      jobs_folder: /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/jobs
+      job_name_key: job_name # Jobs will be written to job_name.sh files with the generated job_name argument filled in.
+      fake_submission: true # Specifying this just writes the files and does not run a submission command.
+
+  constants:
+    GRM_dir: &GRM_DIR "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/GRMs/"
+    pheno_file: &PHENO_FILE "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/phenotype_files/"
+    geno_pref: &GENO_PREF "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/genotype_files/"
+# There are a lot of different types of arguments, and only a few are shown here.
+arguments:
+
+  - !Scalar { name: argument_4, prefix: "-bslmm", value: 1 }
+  - !Scalar { name: argument_5, prefix: "-n", value: 1 }
+
+  - !FilesInFolder
+    name: argument_1
+    prefix: "-g"
+    folder: "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/genotype_files"
+    regexp_filter: "geno(.*)"
+    metadata_rules:
+      - !ExtractFromFileNameRegexpMetadata
+        paths: [ gene_name ]
+
+  - !ArgumentFromMetadata
+    name: argument_2
+    prefix: "-p"
+    prepend: *PHENO_FILE
+    format_rule: "tmp.pheno.{gene_name}"
+    sources: [ { path: gene_name, destination: gene_name }]
+    
+  - !ArgumentFromMetadata
+    name: argument_3
+    prefix: "-k"
+    prepend: *GRM_DIR
+    format_rule: "grm_Ac_{gene_name}.cXX.txt"
+    sources: [ { path: gene_name, destination: gene_name }]
+  
+  - !ArgumentFromMetadata
+    name: argument_6
+    prefix: "-o"
+    format_rule: "Ac_out_{gene_name}"
+    sources: [ { path: gene_name, destination: gene_name }]
+
+  - !ArgumentFromMetadata
+    name: job_name
+    format_rule: "gemma_sub_Ac-{gene_name}"
+    sources: [ { path: gene_name, destination: gene_name }]
+              
+```
+
+
+finish 2
+```{bash, eval=FALSE}
+for file in gemma_sub_Ac-ENSRNOG0000006*.sh; do qsub $file; done
+```
+
+ 

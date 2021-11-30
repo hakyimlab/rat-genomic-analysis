@@ -1,0 +1,184 @@
+---
+title: "rat_compare_genotypes"
+author: "Natasha Santhanam"
+date: "10/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+suppressMessages(library(tidyverse))
+suppressMessages(library(data.table))
+suppressMessages(library(RSQLite))
+suppressMessages(library(qqman))
+"%&%" = function(a,b) paste(a,b,sep="")
+geno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/rat_genotypes_LD_pruned_0.95/"
+```
+
+## Compare the overlap of Rats between the original 80 and new ones sent by Apurva
+
+
+# Convert bimbam to plink format
+
+```{r bimbam convert to map/ped, eval=FALSE}
+filelist <- list.files(geno.dir, pattern = "3473.txt")
+samples <- read_tsv(geno.dir %&% "samples_Rat_metab_phenos_file", col_names = FALSE) %>% rename(FID = X1, IID = X2)
+
+for(fila in filelist) {
+  tempo <- fread(geno.dir %&% fila)
+  
+  MAP <- tempo %>% mutate(CM = 0) %>% select(c(V1, V2, CM, V3))
+  write_tsv(MAP, geno.dir %&% "plink_format/" %&% substr(fila, 1, str_length(fila) - 4) %&% ".map", col_names = FALSE)
+  
+  PED6 <- data.frame(
+  FID = samples$FID,
+  IID = samples$IID,
+  FatherID = 0,
+  MotherID = 0,
+  Sex = 1,
+  Phenotype = 1)
+  
+# convert 0,1,2 to genotypes, a bit tricky
+# make helper dataframe for matching alleles
+myAlleles <- data.frame(
+  AA = paste(tempo$V4,tempo$V4),
+  AB = paste(tempo$V4, tempo$V5),
+  BB = paste(tempo$V5,tempo$V5) )
+
+tempo <- as.matrix(tempo[,7:ncol(tempo)])
+PEDsnps <- round(as.matrix(tempo[,]) + 1)
+
+PEDsnpsAB <- 
+  sapply(seq(nrow(tempo)), function(snp)
+    sapply(PEDsnps[snp, ], function(ind) myAlleles[snp, ind]))
+
+PED <- cbind(PED6, PEDsnpsAB)
+write_tsv(PED, geno.dir %&% "plink_format/" %&% substr(fila, 1, str_length(fila) - 4) %&% ".ped", col_names = FALSE)
+}
+```
+
+
+```{bash convert to plink bim/bam, eval=FALSE}
+# have to convert to bim/bam/bed
+for i in {1..20}
+do
+plink --file chr$i.round2_impute2_3473 --make-bed --out chr$i.round2_impute2_3473
+done
+
+# create a list of chrs to merge 
+for i in {1..20}
+do
+echo chr$i.round2_impute2_3473 >> mergelist.txt
+done
+
+#merge all chromosomes
+plink --merge-list mergelist.txt --make-bed --out rat_metabolic_impute
+```
+
+```{r, have to match snps from datasets, eval=FALSE}
+bim <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/genotype_files/rat_genotype_Ac.bim", col_names = FALSE)
+bim$X2 <- paste(paste("chr", bim$X1, sep= ""), bim$X4, sep = ":")
+```
+
+
+
+# Merge the both rat genotype data sets
+
+# Prior to merging,  want to make sure that the files are mergeable, for this we conduct 3 steps:
+# 1) Make sure the reference genome is similar in the HapMap and the 1000 Genomes Project datasets.
+# 2) Resolve strand issues.
+# 3) Remove the SNPs which after the previous two steps still differ between datasets.
+
+```{bash set ref genome, eval=FALSE}
+awk '{print$2,$5}' rat_metabolic_impute.bim > rat_metabolic_impute_ref-list.txt
+
+plink --bfile rat_geno_merge_Ac --reference-allele rat_metabolic_impute_ref-list.txt --make-bed --out rat_genotype_Ac-adj
+```
+
+```{bash resolve strand issues, eval=FALSE}
+# Check for potential strand issues.
+awk '{print$2,$5,$6}' rat_metabolic_impute.bim > rat_metabolic_impute_tmp
+awk '{print$2,$5,$6}' rat_genotype_Ac-adj.bim > rat_genotype_Ac-adj_tmp
+sort rat_metabolic_impute_tmp rat_genotype_Ac-adj_tmp |uniq -u > all_differences.txt
+# 164380 differences between the files, some of these might be due to strand issues.
+```
+
+```{bash flip snps, eval=FALSE}
+# Print SNP-identifier and remove duplicates.
+awk '{print$1}' all_differences.txt | sort -u > flip_list.txt
+# Generates a file of 164380 SNPs. These are the non-corresponding SNPs between the two files. 
+# Flip the 164380 non-corresponding SNPs. 
+
+plink --bfile rat_genotype_Ac-adj --flip flip_list.txt --reference-allele rat_metabolic_impute_ref-list.txt --make-bed --out corrected_rat_geno_Ac
+
+# Check for SNPs which are still problematic after they have been flipped.
+awk '{print$2,$5,$6}' corrected_rat_geno_Ac.bim > corrected_rat_Ac_tmp
+sort rat_metabolic_impute_tmp corrected_rat_Ac_tmp |uniq -u  > uncorresponding_SNPs.txt
+```
+
+```{bash remove problematic snps, eval=FALSE}
+awk '{print$1}' uncorresponding_SNPs.txt | sort -u > SNPs_for_exlusion.txt
+# The command above generates a list of the 245556 SNPs
+
+# Remove problematic SNPs from both datasets.
+plink --bfile corrected_rat_geno_Ac --exclude SNPs_for_exlusion.txt --make-bed --out rat_geno_Ac_MDS2
+
+plink --bfile rat_metabolic_impute --exclude SNPs_for_exlusion.txt --make-bed --out rat_metabolic_corr
+
+# Merge original rat file with rat metabolic phenotype Data.
+plink --bfile rat_geno_Ac_MDS2 --bmerge rat_metabolic_corr.bed rat_metabolic_corr.bim rat_metabolic_corr.fam --allow-no-sex --make-bed --out all_rats_merged
+```
+
+# Generate GRM
+```{bash create GRM, eval=FALSE}
+gcta --bfile all_rats_merged --make-grm-bin --out all_rats_grm
+```
+
+# Examine GRM for relatedness between overlap individuals
+```{r read GRM, eval=FALSE}
+#from https://gist.github.com/explodecomputer/7150052
+readGRM <- function(rootname)
+{
+	bin.file.name <- paste(rootname, ".grm.bin", sep="")
+	n.file.name <- paste(rootname, ".grm.N.bin", sep="")
+	id.file.name <- paste(rootname, ".grm.id", sep="")
+
+	cat("Reading IDs\n")
+	id <- read.table(id.file.name, colClasses="character")
+	n <- dim(id)[1]
+	cat("Reading GRM\n")
+	bin.file <- file(bin.file.name, "rb")
+	grm <- readBin(bin.file, n=n*(n+1)/2, what=numeric(0), size=4)
+	close(bin.file)
+	cat("Reading N\n")
+	n.file <- file(n.file.name, "rb")
+	N <- readBin(n.file, n=n*(n+1)/2, what=numeric(0), size=4)
+	close(n.file)
+
+	cat("Creating data frame\n")
+	l <- list()
+	for(i in 1:n)
+	{
+		l[[i]] <- 1:i
+	}
+	col1 <- rep(1:n, 1:n)
+	col2 <- unlist(l)
+	grm <- data.frame(id1=col1, id2=col2, N=N, grm=grm)	
+
+	ret <- list()
+	ret$grm <- grm
+	ret$id <- id
+	return(ret)
+}
+
+all_rats_GRM <- readGRM(geno.dir %&% "plink_format/all_rats_grm")
+```
+
+```{r check overlap relatedness, eval=FALSE}
+overlap <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/MultiXcan/overlap_rat_original_metabolic.txt", col_names = FALSE)
+ids <- all_rats_GRM$id %>% mutate(num = rownames(ids)) %>% filter(V1 %in% overlap$X1)
+
+grms <- all_rats_GRM$grm %>% filter(id1 %in% ids$num) %>%  filter(id1 == id2 )
+summary(grms$grm)
+```
+Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+ 0.6856  0.7511  0.7851  0.7833  0.8211  0.8801 

@@ -1,0 +1,337 @@
+---
+title: "gemma_figures"
+author: "Natasha Santhanam"
+date: "3/16/2021"
+output: html_document
+---
+
+#Load modules
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(RSQLite)
+library(ggpubr)
+"%&%" = function(a,b) paste(a,b,sep="")
+```
+
+## Plot the heritability estimate
+```{r}
+theme_set(theme_bw(base_size = 8))
+Data <- "/Users/natashasanthanam/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/Rat-Genomics/Tyson-PalmerLab_PredictDB_Results/sql/"
+poly_dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+Functions
+```{r}
+load_pve <- function(df){
+  df <- df[order(df$point_estimate),]
+  df$index <- 1:nrow(df)
+  return(df)
+}
+```
+
+##Ac
+
+```{r}
+filename <- Data %&% "sqlAc_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+PVE proportion of variance in phenotypes explained by typed genotypes
+```{r}
+PVE_Ac <- read_tsv(poly_dir %&% "Ac_PVE_estimates.txt", col_names = FALSE)
+colnames(PVE_Ac) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PVE_Ac <- inner_join(PVE_Ac, extra, by = "gene")
+
+A_df_Ac <- load_pve(PVE_Ac)
+plt_1 <- (ggplot(data = A_df_Ac, aes(x = index))
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = point_estimate))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by PVE',
+                 y = 'PVE',
+                 title = "Ac")
+          # + ylim(-0.5,1)
+          # + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.08943895", size = 2)
+          # + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.08507938", size = 2)) 
+)
+plt_1
+
+ggplot(PVE_Ac, aes(point_estimate, pred.perf.R2)) + geom_point() + geom_abline()
+  cor.test(PVE_Ac$point_estimate, PVE_Ac$pred.perf.R2, method = "spearman")
+```
+
+PGE proportion of genetic variance explained by the sparse effects terms
+```{r}
+PGE_Ac <- read_tsv(poly_dir %&% "Ac_PGE_estimates.txt", col_names = FALSE)
+colnames(PGE_Ac) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PGE_Ac <- inner_join(PGE_Ac, extra, by = "gene")
+
+plt2.5 <- qplot(x = PVE_Ac$point_estimate, y =  PGE_Ac$point_estimate, geom = c("point", "smooth"), xlab = "PVE", ylab = "PGE", main = "Ac")
+cor.test(PGE_Ac$point_estimate, PGE_Ac$pred.perf.R2, method = "spearman")
+
+p1 <- na.omit(inner_join(PVE_Ac, PGE_Ac, by = "gene"))
+colnames(p1) <- c("gene", "PGE", "cred_1", "cred_2", "PVE", "credible_set_1", "credible_set_2")
+p1$LCS <- ifelse(p1$cred_1 <=0.01, "<=0.01", ">0.01")
+ggplot(p1, aes(x=PVE, y=PGE, color=LCS)) + geom_pointrange(aes(ymin=cred_1, ymax=cred_2), width = .2, color = "gray") + geom_point() + theme(legend.position = c(0.95, 0.2))
+```
+
+#Il
+
+```{r}
+filename <- Data %&% "Il_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+PVE proportion of variance in phenotypes explained by typed genotypes
+```{r}
+PVE_Il <- read_tsv(poly_dir %&% "Il_PVE_estimates.txt", col_names = FALSE)
+colnames(PVE_Il) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PVE_Il <- inner_join(PVE_Il, extra, by = "gene")
+
+A_df_Il <- load_pve(PVE_Il)
+plt_2 <- (ggplot(data = A_df_Il, aes(x = index))
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = point_estimate))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by PVE',
+                 y = 'PVE',
+                 title = "Il")
+          # + ylim(-0.5,1)
+          # + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.08943895", size = 2)
+          # + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.08507938", size = 2)) 
+)
+plt_2
+
+ggplot(PVE_Il, aes(point_estimate, pred.perf.R2)) + geom_point() + geom_abline()
+  cor.test(PVE_Il$point_estimate, PVE_Il$pred.perf.R2, method = "spearman")
+```
+```{r}
+PGE_Il <- read_tsv(poly_dir %&% "Il_PGE_estimates.txt", col_names = FALSE)
+colnames(PGE_Il) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PGE_Il <- inner_join(PGE_Il, extra, by = "gene")
+
+plt2.5 <- qplot(x = PVE_Il$point_estimate, y =  PGE_Il$point_estimate, geom = c("point", "smooth"), xlab = "PVE", ylab = "PGE", main = "Il")
+cor.test(PGE_Il$point_estimate, PGE_Il$pred.perf.R2, method = "spearman")
+```
+
+
+##Lh
+```{r}
+filename <- Data %&% "Lh_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+PVE proportion of variance in phenotypes explained by typed genotypes
+```{r}
+PVE_Lh <- read_tsv(poly_dir %&% "Lh_PVE_estimates.txt", col_names = FALSE)
+colnames(PVE_Lh) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PVE_Lh <- inner_join(PVE_Lh, extra, by = "gene")
+
+A_df_Lh <- load_pve(PVE_Lh)
+plt_3 <- (ggplot(data = A_df_Lh, aes(x = index))
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = point_estimate))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by PVE',
+                 y = 'PVE',
+                 title = "Lh")
+          # + ylim(-0.5,1)
+          # + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.08943895", size = 2)
+          # + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.08507938", size = 2)) 
+)
+plt_3
+
+ggplot(PVE_Il, aes(point_estimate, pred.perf.R2)) + geom_point() + geom_abline()
+  cor.test(PVE_Il$point_estimate, PVE_Il$pred.perf.R2, method = "spearman")
+```
+```{r}
+PGE_Lh <- read_tsv(poly_dir %&% "Lh_PGE_estimates.txt", col_names = FALSE)
+colnames(PGE_Lh) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PGE_Lh <- inner_join(PGE_Lh, extra, by = "gene")
+
+plt3.5 <- qplot(x = PVE_Lh$point_estimate, y =  PGE_Lh$point_estimate, geom = c("point", "smooth"), xlab = "PVE", ylab = "PGE", main = "Lh")
+cor.test(PGE_Lh$point_estimate, PGE_Lh$pred.perf.R2, method = "spearman")
+```
+
+
+
+##Pl
+```{r}
+filename <- Data %&% "Pl_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+PVE proportion of variance in phenotypes explained by typed genotypes
+```{r}
+PVE_Pl <- read_tsv(poly_dir %&% "Pl_PVE_estimates.txt", col_names = FALSE)
+colnames(PVE_Pl) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PVE_Pl <- inner_join(PVE_Pl, extra, by = "gene")
+
+A_df_Pl <- load_pve(PVE_Pl)
+plt_4 <- (ggplot(data = A_df_Pl, aes(x = index))
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = point_estimate))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by PVE',
+                 y = 'PVE',
+                 title = "Pl")
+          # + ylim(-0.5,1)
+          # + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.08943895", size = 2)
+          # + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.08507938", size = 2)) 
+)
+plt_4
+
+ggplot(PVE_Il, aes(point_estimate, pred.perf.R2)) + geom_point() + geom_abline()
+  cor.test(PVE_Il$point_estimate, PVE_Il$pred.perf.R2, method = "spearman")
+```
+
+```{r}
+PGE_Pl <- read_tsv(poly_dir %&% "Pl_PGE_estimates.txt", col_names = FALSE)
+colnames(PGE_Pl) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PGE_Pl <- inner_join(PGE_Pl, extra, by = "gene")
+
+
+plt4.5 <- qplot(x = PVE_Pl$point_estimate, y =  PGE_Pl$point_estimate, geom = c("point", "smooth"), xlab = "PVE", ylab = "PGE", main = "Pl")
+cor.test(PGE_Pl$point_estimate, PGE_Pl$pred.perf.R2, method = "spearman")
+```
+
+
+
+##Vo
+```{r}
+filename <- Data %&% "Vo_output_db.db"
+sqlite.driver <- dbDriver("SQLite")
+conn <- dbConnect(RSQLite::SQLite(), filename)
+
+extra <- dbGetQuery(conn, 'select * from extra')
+extra <- extra[, c(1,2,4,3,5,6)]
+dbDisconnect(conn)
+```
+
+PVE proportion of variance in phenotypes explained by typed genotypes
+```{r}
+PVE_Vo <- read_tsv(poly_dir %&% "Vo_PVE_estimates.txt", col_names = FALSE)
+colnames(PVE_Vo) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PVE_Vo <- inner_join(PVE_Vo, extra, by = "gene")
+
+A_df_Vo <- load_pve(PVE_Vo)
+plt_5 <- (ggplot(data = A_df_Vo, aes(x = index))
+          + geom_point(aes(x=index, y=pred.perf.R2), colour = "red", size = 0.2)
+          + geom_line(aes(y = point_estimate))
+          + geom_hline(yintercept = 0, linetype=2)
+          + labs(x = 'Genes Sorted by PVE',
+                 y = 'PVE',
+                 title = "Vo")
+          # + ylim(-0.5,1)
+          # + annotate("text", x = 1200, y = 0.9, label = "Mean h2 =  0.08943895", size = 2)
+          # + annotate("text", x = 1200, y = 0.8, label = "Mean r2 =  0.08507938", size = 2)) 
+)
+plt_5
+
+ggplot(PVE_Vo, aes(point_estimate, pred.perf.R2)) + geom_point() + geom_abline()
+  cor.test(PVE_Vo$point_estimate, PVE_Vo$pred.perf.R2, method = "spearman")
+```
+
+```{r}
+PGE_Vo <- read_tsv(poly_dir %&% "Vo_PGE_estimates.txt", col_names = FALSE)
+colnames(PGE_Vo) <- c("gene", "point_estimate", "credible_set_1", "credible_set_2")
+PGE_Vo <- inner_join(PGE_Vo, extra, by = "gene")
+
+plt5.5 <- qplot(x = PVE_Vo$point_estimate, y =  PGE_Vo$point_estimate, geom = c("point", "smooth"), xlab = "PVE", ylab = "PGE", main = "Vo")
+cor.test(PGE_Vo$point_estimate, PGE_Vo$pred.perf.R2, method = "spearman")
+ggarrange(plt_1, plt_2, plt_3, plt_4, plt_5, ncol = 2, nrow = 3)
+ggarrange(plt1.5, plt2.5, plt3.5, plt4.5, plt5.5, ncol = 3, nrow = 2)
+
+```
+
+
+#Generate Figures to compare PVE in gemma vs h2 in gcta for each tissue
+
+#Ac
+```{r}
+Ac_pve <- read_tsv(poly_dir %&% "Ac_PVE_estimates.txt", col_names = FALSE)
+colnames(Ac_pve) <- c("gene", "h2", "credible_set_1", "credible_set_2")
+
+Ac_h2 <- read_tsv(poly_dir %&% "Ac_h2.txt", col_names = FALSE)
+colnames(Ac_h2) <- c("gene", "h2", "SE")
+Ac_h2$gene <- substr(Ac_h2$gene,5, 22)
+
+Ac_pve <- Ac_pve[match(Ac_h2$gene, Ac_pve$gene),]
+cor.test(Ac_pve$h2, Ac_h2$h2)
+qplot(x= Ac_h2$h2, y = Ac_pve$h2, geom= "point", xlab = "GCTA h2", ylab = "BSLMM PVE") + geom_abline()
+```
+#Il
+```{r}
+Il_pve <- read_tsv(poly_dir %&% "Il_PVE_estimates.txt", col_names = FALSE)
+colnames(Il_pve) <- c("gene", "h2", "credible_set_1", "credible_set_2")
+
+Il_h2 <- read_tsv(poly_dir %&% "Il_h2.txt", col_names = FALSE)
+colnames(Il_h2) <- c("gene", "h2", "SE")
+Il_h2$gene <- substr(Il_h2$gene,5, 22)
+
+Il_pve <- Il_pve[match(Il_h2$gene, Il_pve$gene),]
+cor.test(Il_pve$h2, Il_h2$h2)
+qplot(x= Il_h2$h2, y = Il_pve$h2, geom= "point", xlab = "GCTA h2", ylab = "BSLMM PVE") + geom_abline()
+```
+#Lh
+```{r}
+Lh_pve <- read_tsv(poly_dir %&% "Lh_PVE_estimates.txt", col_names = FALSE)
+colnames(Lh_pve) <- c("gene", "h2", "credible_set_1", "credible_set_2")
+
+Lh_h2 <- read_tsv(poly_dir %&% "Lh_h2.txt", col_names = FALSE)
+colnames(Lh_h2) <- c("gene", "h2", "SE")
+Lh_h2$gene <- substr(Lh_h2$gene,5, 22)
+
+Lh_pve <- Lh_pve[match(Lh_h2$gene, Lh_pve$gene),]
+cor.test(Lh_pve$h2, Lh_h2$h2)
+qplot(x= Lh_h2$h2, y = Lh_pve$h2, geom= "point", xlab = "GCTA h2", ylab = "BSLMM PVE") + geom_abline()
+```
+
+#Pl
+```{r}
+Pl_pve <- read_tsv(poly_dir %&% "Pl_PVE_estimates.txt", col_names = FALSE)
+colnames(Pl_pve) <- c("gene", "h2", "credible_set_1", "credible_set_2")
+
+Pl_h2 <- read_tsv(poly_dir %&% "Pl_h2.txt", col_names = FALSE)
+colnames(Pl_h2) <- c("gene", "h2", "SE")
+Pl_h2$gene <- substr(Pl_h2$gene,5, 22)
+
+Pl_pve <- Pl_pve[match(Pl_h2$gene, Pl_pve$gene),]
+cor.test(Pl_pve$h2, Pl_h2$h2)
+qplot(x= Pl_h2$h2, y = Pl_pve$h2, geom= "point", xlab = "GCTA h2", ylab = "BSLMM PVE") + geom_abline()
+```
+#Vo
+```{r}
+Vo_pve <- read_tsv(poly_dir %&% "Vo_PVE_estimates.txt", col_names = FALSE)
+colnames(Vo_pve) <- c("gene", "h2", "credible_set_1", "credible_set_2")
+
+Vo_h2 <- read_tsv(poly_dir %&% "Vo_h2.txt", col_names = FALSE)
+colnames(Vo_h2) <- c("gene", "h2", "SE")
+Vo_h2$gene <- substr(Vo_h2$gene,5, 22)
+
+Vo_pve <- Vo_pve[match(Vo_h2$gene, Vo_pve$gene),]
+cor.test(Vo_pve$h2, Vo_h2$h2)
+qplot(x= Vo_h2$h2, y = Vo_pve$h2, geom= "point", xlab = "GCTA h2", ylab = "BSLMM PVE") + geom_abline()
+```
+

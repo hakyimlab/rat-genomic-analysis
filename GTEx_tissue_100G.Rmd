@@ -1,0 +1,263 @@
+---
+title: "GTEx_tissues_1000G"
+author: "Natasha Santhanam"
+date: "10/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+suppressMessages(library(tidyverse))
+suppressMessages(library(devtools))
+suppressMessages(library(broom))
+suppressMessages(library(data.table))
+suppressMessages(library(RSQLite))
+suppressMessages(library(data.table))
+suppressMessages(library(qqman))
+suppressMessages(library(ggrepel))
+suppressMessages(library(ggpubr))
+"%&%" = function(a,b) paste(a,b,sep="")
+```
+
+#Create VCF format for 1000 G that we can use
+```{bash convert to vcf format from plink, eval=FALSE}
+plink --bfile 1000G_refpanel_v5a.hapmap3 --recode vcf --out 1000G_refpanel_v5a.hapmap3
+```
+
+# Nucleus Accumbnes Basal Ganglia
+```{bash run prediXcan, eval=FALSE}
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/ 
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/Data/1000G/vcf
+export MODEL=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/elastic_net_models
+export RESULTS=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/prediXcan_results
+
+printf "Predict expression\n\n"
+
+python3 $METAXCAN/Predict.py \
+--model_db_path $MODEL/en_Brain_Nucleus_accumbens_basal_ganglia.db \
+--vcf_genotypes $GENO/ALL.chr*.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz \
+--vcf_mode genotyped \
+--prediction_output $RESULTS/vcf_1000G_hg37_en/Basal_Ganglia__predict.txt \
+--prediction_summary_output $RESULTS/vcf_1000G_hg37_en/Basal_Ganglia__summary.txt \
+--verbosity 9 \
+--throw
+```
+
+# Hippocampus
+```{bash, eval=FALSE}
+#!/bin/bash
+
+#PBS -N 1000G_Hippocampus_PrediXcan
+#PBS -S /bin/bash
+#PBS -l walltime=48:00:00
+#PBS -l nodes=2:ppn=1
+
+#PBS -l mem=9gb
+
+
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/hipp.out
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/hipp.err
+source ~/.bashrc
+source ~/.bash_profile
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/
+
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/ 
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/Data/1000G/vcf
+export MODEL=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/elastic_net_models
+export RESULTS=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/prediXcan_results
+
+printf "Predict expression\n\n"
+
+python3 $METAXCAN/Predict.py \
+--model_db_path $MODEL/en_Brain_Hippocampus.db \
+--vcf_genotypes $GENO/ALL.chr*.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz \
+--vcf_mode genotyped \
+--prediction_output $RESULTS/vcf_1000G_hg37_en/Hippocampus__predict.txt \
+--prediction_summary_output $RESULTS/vcf_1000G_hg37_en/Hippocampus__summary.txt \
+--verbosity 9 \
+--throw
+```
+
+
+# Cerebellum
+
+```{bash, cerebellum GREx, eval=FALSE}
+#!/bin/bash
+
+#PBS -N 1000G_Cerebellum_PrediXcan
+#PBS -S /bin/bash
+#PBS -l walltime=48:00:00
+#PBS -l nodes=2:ppn=1
+
+#PBS -l mem=9gb
+
+
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/cerebellum.out
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/cerebellum.err
+source ~/.bashrc
+source ~/.bash_profile
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/
+
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/ 
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/Data/1000G/vcf
+export MODEL=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/elastic_net_models
+export RESULTS=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/prediXcan_results
+
+printf "Predict expression\n\n"
+
+python3 $METAXCAN/Predict.py \
+--model_db_path $MODEL/en_Brain_Cerebellum.db \
+--vcf_genotypes $GENO/ALL.chr*.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz \
+--vcf_mode genotyped \
+--prediction_output $RESULTS/vcf_1000G_hg37_en/Cerebellum__predict.txt \
+--prediction_summary_output $RESULTS/vcf_1000G_hg37_en/Cerebellum__summary.txt \
+--verbosity 9 \
+--throw
+```
+
+# Anterior Cingulate Cortex
+
+```{bash anterior cingulate cortex GREX, eval=FALSE}
+#!/bin/bash
+
+#PBS -N 1000G_ACC_PrediXcan
+#PBS -S /bin/bash
+#PBS -l walltime=48:00:00
+#PBS -l nodes=2:ppn=1
+
+#PBS -l mem=9gb
+
+
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/ACC.out
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/ACC.err
+source ~/.bashrc
+source ~/.bash_profile
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/
+
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/ 
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/Data/1000G/vcf
+export MODEL=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/elastic_net_models
+export RESULTS=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/prediXcan_results
+
+printf "Predict expression\n\n"
+
+python3 $METAXCAN/Predict.py \
+--model_db_path $MODEL/en_Brain_Anterior_cingulate_cortex_BA24.db \
+--vcf_genotypes $GENO/ALL.chr*.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz \
+--vcf_mode genotyped \
+--prediction_output $RESULTS/vcf_1000G_hg37_en/Anterior_Cingulate_Cortex__predict.txt \
+--prediction_summary_output $RESULTS/vcf_1000G_hg37_en/Anterior_Cingulate_Cortex__summary.txt \
+--verbosity 9 \
+--throw
+```
+
+
+# Amygdala
+
+```{bash, eval=FALSE}
+#!/bin/bash
+
+#PBS -N 1000G_amygdala_PrediXcan
+#PBS -S /bin/bash
+#PBS -l walltime=48:00:00
+#PBS -l nodes=2:ppn=1
+
+#PBS -l mem=9gb
+
+
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/amygdala.out
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/amygdala.err
+source ~/.bashrc
+source ~/.bash_profile
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/
+
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/ 
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/Data/1000G/vcf
+export MODEL=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/elastic_net_models
+export RESULTS=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/prediXcan_results
+
+printf "Predict expression\n\n"
+
+python3 $METAXCAN/Predict.py \
+--model_db_path $MODEL/en_Brain_Amygdala.db \
+--vcf_genotypes $GENO/ALL.chr*.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz \
+--vcf_mode genotyped \
+--prediction_output $RESULTS/vcf_1000G_hg37_en/Amygdala__predict.txt \
+--prediction_summary_output $RESULTS/vcf_1000G_hg37_en/Amygdala__summary.txt \
+--verbosity 9 \
+--throw
+```
+
+
+#Caclulate GREx with 1000G and psychENCODE hg19 models 
+
+this will be sent to Tunahan/Madhav/ 
+
+```{bash}
+#!/bin/bash
+
+#PBS -N 1000G_psych_hg19_PrediXcan
+#PBS -S /bin/bash
+#PBS -l walltime=48:00:00
+#PBS -l nodes=2:ppn=1
+
+#PBS -l mem=9gb
+
+
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/psych_hg19.out
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/logs/psych_hg19.err
+source ~/.bashrc
+source ~/.bash_profile
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/
+
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/Data/1000G/vcf
+export MODEL=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/psychENCODE/prediXcan/models
+export RESULTS=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/psychENCODE/prediXcan
+
+printf "Predict expression\n\n"
+
+python3 $METAXCAN/Predict.py \
+--model_db_path $MODEL/psychencode.db \
+--vcf_genotypes $GENO/ALL.chr*.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz \
+--vcf_mode genotyped \
+--prediction_output $RESULTS/vcf_1000G/psychENCODE_hg19__predict.txt \
+--prediction_summary_output $RESULTS/vcf_1000G/psychENCODE_hg19__summary.txt \
+--verbosity 9 \
+--throw
+```
+
+
+```{r make correlation matrix across all 5 brain tissues, eval=FALSE}
+filelist <- list.files("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/1000G/prediXcan_results/vcf_1000G_hg37_en", pattern = "predict.txt", full.names = TRUE)
+
+amygdala <- read_tsv(filelist[1], col_names = TRUE)
+all_tissues <- amygdala %>% select(c(ENSG00000237491.8)) %>% rename(amygdala = ENSG00000237491.8)
+
+filelist <- filelist[2:length(filelist)]
+for(fila in filelist) {
+  tempo <- read_tsv(fila, col_names = TRUE)
+  tis <- substr(fila, 90, (str_length(fila) - 13))
+  tempo <- tempo %>% select(c(ENSG00000237491.8))
+  colnames(tempo) <- tis
+  all_tissues <- cbind(all_tissues, tempo)
+}
+
+```
+
+
+```{r corrplot in GTEx tissues for one gene ENSG00000237491.8}
+all_tissues <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/corr_ENSG00000237491.8.txt", col_names =TRUE)
+M <- cor(all_tissues, method = "spearman")
+
+col1 = colorRampPalette(c('#7F0000', 'red', '#FF7F00', 'yellow', 'white',
+                           'cyan', '#007FFF', 'blue', '#00007F'))
+
+corrplot(M, order = 'AOE', 
+         col = col1(10), diag = TRUE, tl.cex = 1,)
+```
+

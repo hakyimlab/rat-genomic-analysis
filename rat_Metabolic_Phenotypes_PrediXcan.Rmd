@@ -1,0 +1,185 @@
+---
+title: "rat_PrediXcan_Metabolic_Phenotypes"
+author: "Natasha Santhanam"
+date: "9/30/2021"
+output: html_document
+---
+
+```{r setup, eval=FALSE}
+library(tidyverse)
+library(devtools)
+library(broom)
+library(data.table)
+library(RSQLite)
+library(data.table)
+library(qqman)
+"%&%" = function(a,b) paste(a,b,sep="")
+geno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/rat_genotypes_LD_pruned_0.95/"
+
+numextract <- function(string){ 
+  as.numeric(str_extract(string, "\\-*\\d+"))
+}
+```
+
+
+##Run PrediXcan with Metabolite Phenotype Data
+
+# Create model with right column names for PrediXcan (do for all 5 tissues)
+```{r create txt genotypes, eval=FALSE}
+filelist <- list.files(geno.dir, pattern = ".bimbam")
+#ids for rats are in the phenotype file under rat_rfid
+
+for(fila in filelist) {
+  tempo <- fread(geno.dir %&% fila)
+  tempo <- tempo %>% mutate(chr =  numextract(sapply(strsplit(tempo$V1, ":"), `[`, 1)), .before = V1) %>% mutate(pos = numextract(sapply(strsplit(tempo$V1, ":"), `[`, 2)), .before = V2) %>% mutate(maf = 0, .before = V4)
+  write_tsv(tempo, geno.dir %&% substr(fila, 1, nchar(fila) - 7) %&% ".txt", col_names = FALSE)
+}
+```
+
+
+```{r change colnames of Ac prediction model, eval=FALSE}
+filename <- MODEL %&% "Ac_output_db.db"
+  sqlite.driver <- dbDriver("SQLite")
+  conn <- dbConnect(RSQLite::SQLite(), filename)
+  extra <- dbGetQuery(conn, 'select * from extra')
+  weights <- dbGetQuery(conn, 'select * from weights')
+extra <- extra %>% select(c(gene, genename, n.snps, R2, pval)) %>% mutate(pred.perf.qval = NA) 
+colnames(extra) <- c("gene", "genename", "n.snps.in.model", "pred.perf.R2", "pred.perf.pval", "pred.perf.qval")
+```
+
+
+```{r create database connection, eval=FALSE}
+model_db = MODEL %&% "Ac_annot_prediXcan_db.db"
+conn <- dbConnect(RSQLite::SQLite(), model_db)
+dbWriteTable(conn, "weights", weights)
+dbWriteTable(conn, "extra", extra)
+
+#check to see model is set up 
+dbListTables(conn)
+dbGetQuery(conn, 'SELECT * FROM weights') %>% head
+dbGetQuery(conn, 'SELECT * FROM extra') %>% head
+dbDisconnect(conn)
+```
+
+# Do for all 5 tissues 
+```{bash run prediXcan, eval = FALSE}
+#run prediXcan
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/tensorqtl/ 
+export METAXCAN=/gpfs/data/im-lab/nas40t2/natasha/GTEX_Analysis/MetaXcan/software
+export GENO=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/rat_genotypes_LD_pruned_0.95
+export MODEL=/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/models
+
+python $METAXCAN/Predict.py \
+--model_db_path $MODEL/Ac_annot_prediXcan_db.db \
+--text_genotypes  \
+ $GENO/chr1.round2_impute2_3473.txt  \
+ $GENO/chr10.round2_impute2_3473.txt  \
+ $GENO/chr11.round2_impute2_3473.txt   \
+ $GENO/chr12.round2_impute2_3473.txt \
+ $GENO/chr13.round2_impute2_3473.txt  \
+ $GENO/chr14.round2_impute2_3473.txt  \
+ $GENO/chr15.round2_impute2_3473.txt \
+ $GENO/chr16.round2_impute2_3473.txt \
+ $GENO/chr17.round2_impute2_3473.txt \
+ $GENO/chr18.round2_impute2_3473.txt  \
+ $GENO/chr19.round2_impute2_3473.txt \
+ $GENO/chr2.round2_impute2_3473.txt \
+ $GENO/chr20.round2_impute2_3473.txt \
+ $GENO/chr3.round2_impute2_3473.txt \
+ $GENO/chr4.round2_impute2_3473.txt  \
+ $GENO/chr5.round2_impute2_3473.txt \
+ $GENO/chr6.round2_impute2_3473.txt \
+ $GENO/chr7.round2_impute2_3473.txt \
+ $GENO/chr8.round2_impute2_3473.txt \
+ $GENO/chr9.round2_impute2_3473.txt \
+--on_the_fly_mapping METADATA "{}_{}_{}_{}" \
+--text_sample_ids $GENO/samples_Rat_metab_phenos_file \
+--prediction_output rat_metabolic_Ac__predict.txt  \
+--prediction_summary_output rat_metabolic_Ac__summary.txt \
+--throw
+
+#INFO - 34 % of models' snps used
+```
+
+```{r run associations, eval=FALSE}
+#run asssociation in prediXcan
+ PHENO = "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/"
+ RESULTS = "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/prediXcan/"
+ 
+ 
+pheno <- read_csv(PHENO %&% "processed_obesity_rat_Palmer_phenotypes.csv", col_names = TRUE)
+
+for(i in 3:length(colnames(pheno))){
+trait <- colnames(pheno)[i]
+runLOC <- "python3 " %&% METAXCAN %&% "PrediXcanAssociation.py " %&% "--expression_file " %&% RESULTS %&% "rat_metabolic_Ac__predict.txt --input_phenos_file " %&% PHENO %&% "processed_obesity_rat_Palmer_cols_phenotypes.txt " %&% "--input_phenos_column " %&% i %&%  " --output " %&% RESULTS %&% "associations/rat_Palmer__association_" %&% trait %&% "_.txt --verbosity 9 --throw"
+system(runLOC)
+}
+```
+
+
+```{r format prediXcan associations, eval=FALSE}
+results.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/prediXcan/associations/"
+filelist <- list.files(results.dir, pattern = "mice_Palmer__association", full.names = TRUE)
+full_df <- data.frame()
+
+for(fila in filelist) {
+  assoc_fila <- read_tsv(fila, col_names = TRUE)
+  pheno_id <- substr(fila, 97, (str_length(fila) - 5))
+  tempo <- cbind(assoc_fila, metabolic_trait=pheno_id) %>% select(-c(status))
+  full_df <- rbind(full_df, tempo)
+} 
+#full_df <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_metabolic_traits_Ac_full_assocs.txt", col_names = TRUE)
+
+tempo_df <- full_df %>% filter(pvalue < 5.836349e-06)
+
+#566 sig genes
+tempo_df %>% group_by(gene) %>% summarise(n = n())
+
+#all 10 traits
+tempo_df %>% group_by(metabolic_trait) %>% summarise(n = n())
+```
+
+```{r add biomart genenames}
+ensembl <- useEnsembl(biomart = "genes")
+datasets <- listDatasets(ensembl)
+ensembl <- useEnsembl(biomart = "ensembl", 
+                   dataset = "rnorvegicus_gene_ensembl", 
+                   mirror = "asia")
+
+genes <-  as.data.frame(tempo_df$gene)
+gene_IDs <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","external_gene_name"),
+              values = genes, mart= ensembl)
+gene_IDs <- gene_IDs %>% rename(gene = ensembl_gene_id)
+
+tempo_annot <- left_join(tempo_df, gene_IDs, by = "gene")
+#write_tsv(tempo_annot, "/Users/natashasanthanam/Github/rat-genomic-analysis/data/rat_metabolic_traits_Ac_full_annot_assocs.txt", col_names = TRUE)
+```
+
+
+
+```{r run qqplot and manhattan}
+gene_annot <- readRDS("/Users/natashasanthanam/Github/rat-genomic-analysis/data/gene_annotation.RDS") %>% rename(gene = gene_id)
+
+tempo_manhatt <- inner_join(gene_annot, full_df, by = "gene")
+tempo_manhatt$chr <- as.numeric(tempo_manhatt$chr)
+
+manhattan(tempo_manhatt, chr="chr", bp="start", snp="gene", p="pvalue", ylim = c(0, 10), suggestiveline = F, genomewideline = F, main = "Manhattan plot of Significant PrediXcan associations")
+abline(h= 5.233859, col="red")
+#only keep R2 > 0.1
+
+
+tempo_df <- full_df %>% filter(pvalue < 1e-03)
+#qqplot
+qqplot_by_group <- function(pval, group, pval_cutoff = 1, ...) {
+  n <- length(pval)
+  pexp <- rank(pval) / n
+  df <- data.frame(p.val = pval, grp = group) %>% group_by(grp) %>% mutate(p.exp = pval_cutoff * rank(p.val) / (n() + 1)) %>% ungroup()
+  p <- ggplot(df) + 
+    geom_point(aes(x = -log10(p.exp), y = -log10(p.val), color = grp), ...) + 
+    geom_hline(yintercept = -log10(0.05 / n)) + 
+    geom_abline(slope = 1, intercept = 0, linetype = 2)
+  return(p)
+}
+qqplot_by_group(tempo_df$pvalue, group = 1, pval_cutoff = 1e-3)
+```
+

@@ -1,0 +1,375 @@
+---
+title: "Lassosum_PTRS_GTEx"
+author: "Natasha Santhanam"
+date: "11/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(data.table)
+library(readxl)
+library(qqman)
+library(arrow)
+library(RSQLite)
+library(glmnet)
+library(GenomicRanges)
+library(liftOver)
+"%&%" = function(a,b) paste(a,b,sep="")
+dir <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+```
+
+## Script to run Lassosum PTRS (Summary Statistics PTRS) on GTEx data for Height 
+
+```{bash create conda env, eval=FALSE}
+conda env create -f environment.yml
+
+# to activate: conda activate SPrediXcan2PTRS
+```
+
+
+# First need to create genotype covariates using GTEx genotype file (vcf) and prediction Models 
+
+We'll use Muscle as the prediction model since that will be the best to predict height
+
+```{bash script to calculate genotype covariances}
+#PBS -S /bin/bash
+#PBS -l walltime=24:00:00
+#PBS -l nodes=1:ppn=1
+#PBS -l mem=32gb
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/logs/gtex_v8_en_geno_cov/$TISSUE.${PBS_JOBID}.err
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/logs/gtex_v8_en_geno_cov/$TISSUE.${PBS_JOBID}.log
+
+
+source ~/.bash_profile
+source ~/.bashrc
+
+conda activate SPrediXcan2PTRS
+
+# load extra python dependency
+export PYTHONPATH=/gpfs/data/im-lab/nas40t2/yanyul/GitHub/SPrediXcan2PTRS
+export PYTHONPATH=/gpfs/data/im-lab/nas40t2/yanyul/GitHub/transethnic_prs
+
+# script path 
+gen_script=/gpfs/data/im-lab/nas40t2/yanyul/GitHub/SPrediXcan2PTRS/generate_gtex_v8_geno_cov.py
+
+# input data
+genotype=/gpfs/data/gtex-group/v8/59348/gtex/exchange/GTEx_phs000424/exchange/analysis_releases/GTEx_Analysis_2017-06-05_v8/genotypes/WGS/variant_calls/GTEx_Analysis_2017-06-05_v8_WholeGenomeSeq_838Indiv_Analysis_Freeze.SHAPEIT2_phased.vcf.gz
+predictdb=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/ctimp/ctimp_$TISSUE.db
+eursample=/gpfs/data/im-lab/nas40t2/Data/GTEx/V8/eur_samples.txt
+
+# output
+outdir=/scratch/nsanthanam1/Lassosum_PTRS/geno_cov
+prefix=ctimp_$TISSUE.geno_cov
+
+cd /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/logs/
+
+python $gen_script \
+  --genotype_vcf $genotype \
+  --predictdb $predictdb \
+  --mode evd 0 \
+  --sample_list $eursample \
+  --output_prefix $outdir/$prefix > \
+  gtex_v8_en_geno_cov/$TISSUE.${PBS_JOBID}.log 2>&1
+```
+
+```{bash calculate genotype covariances, eval=FALSE}
+tissue=Whole_Blood
+qsub -v TISSUE=$tissue geno_cov_PTRS.pbs 
+```
+
+
+# Calculate Summary Stat version of PTRS
+
+This will have 2 parts: running S-PrediXcan then calculating Lassosum PTRS
+
+
+```{bash submission for Lassosum PTRS, eval=FALSE}
+#PBS -S /bin/bash
+#PBS -l walltime=24:00:00
+#PBS -l nodes=1:ppn=1
+#PBS -l mem=32gb
+#PBS -e /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/logs/run_Muscle_Skeletal.${PBS_JOBID}.err
+#PBS -o /gpfs/data/im-lab/nas40t2/natasha/rat_genomics/PTRS_weights/logs/run_Muscle_Skeletal.${PBS_JOBID}.log
+
+# ARGS:
+# TISSUE
+# GWASTAG
+# GWASN
+
+if [[ -z $TISSUE ]]
+then
+  TISSUE=$1
+  GWASTAG=$2
+  GWASN=$3
+  PBS_O_WORKDIR=/gpfs/data/im-lab/nas40t2/natasha/SPrediXcan2PTRS
+fi
+
+source ~/.bash_profile
+source ~/.bashrc
+
+predict_db=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/ctimp/ctimp_${TISSUE}.db
+predict_db_cov=/gpfs/data/im-lab/nas40t2/Data/PredictDB/GTEx_v8/models_v1/eqtl/ctimp/ctimp_${TISSUE}.txt.gz
+gwas=/gpfs/data/im-lab/nas40t2/Data/SummaryResults/imputed_gwas_hg38_1.1/imputed_UKB_50_${GWASTAG}.txt.gz
+outdir=/scratch/nsanthanam1/Lassosum_PTRS/geno_cov/run_gtex_gwas_eur
+
+export PYTHONPATH=/gpfs/data/im-lab/nas40t2/yanyul/GitHub/SPrediXcan2PTRS
+export PYTHONPATH=/gpfs/data/im-lab/nas40t2/yanyul/GitHub/transethnic_prs
+
+conda activate /gpfs/data/im-lab/nas40t2/bin/envs/imlabtools/
+
+
+# impute beta and se from z
+imputeb_gwas=$outdir/imputed_bhat.${GWASTAG}.txt.gz
+if [[ ! -f $imputeb_gwas ]]
+then
+  echo "Imputing effect size of GWAS"
+  echo "Input: $gwas"
+  echo "Output: $imputeb_gwas"
+  python /gpfs/data/im-lab/nas40t2/natasha/SPrediXcan2PTRS/misc_scripts/run_gtex_gwas/impute_b_for_gwas.py \
+    --input $gwas \
+    --zscore zscore \
+    --freq frequency \
+    --sample_size sample_size \
+    --output $imputeb_gwas
+fi
+
+
+# run s-predixcan
+spxcanscript=/gpfs/data/im-lab/nas40t2/yanyul/GitHub/MetaXcan/software/SPrediXcan.py
+pxcan_file=$outdir/spredixcan.${GWASTAG}.${TISSUE}.csv
+if [[ ! -f $pxcan_file ]]
+then
+  echo "Running S-PrediXcan"
+  echo "Input: $imputeb_gwas"
+  echo "Output: $pxcan_file"
+  python $spxcanscript \
+    --gwas_file $imputeb_gwas \
+    --snp_column variant_id \
+    --effect_allele_column effect_allele \
+    --non_effect_allele_column non_effect_allele \
+    --beta_column effect_size \
+    --se_column standard_error \
+    --model_db_path $predict_db \
+    --covariance $predict_db_cov \
+    --additional_output \
+    --throw \
+    --output_file $pxcan_file
+fi
+
+# run SPrediXcan2PTRS
+conda activate SPrediXcan2PTRS
+
+runscript=/gpfs/data/im-lab/nas40t2/natasha/SPrediXcan2PTRS/run_pxcan2ptrs.py
+
+geno_cov_file=/scratch/nsanthanam1/Lassosum_PTRS/geno_cov/ctimp_$TISSUE.geno_cov.chr{chr_num}.evd.npz
+
+ptrs_prefix=$outdir/spxcan2ptrs_original_scale.${GWASTAG}.${TISSUE}
+ptrs_file=$ptrs_prefix.results.h5
+
+if [[ ! -f $ptrs_file ]]
+then
+  echo "Running SPrediXcan2PTRS"
+  echo "Input: $pxcan_file"
+  echo "Output: $ptrs_file"
+  python $runscript \
+    --predixcan $pxcan_file \
+    --predictdb $predict_db \
+    --geno_cov $geno_cov_file \
+    --gwas $gwas \
+    --gwas_cols chromosome=chromosome \
+      position=position \
+      effect_allele=effect_allele \
+      non_effect_allele=non_effect_allele \
+    --gwas_sample_size $GWASN \
+    --output_prefix $ptrs_prefix \
+    --original_scale
+fi
+
+
+ptrs_prefix=$outdir/spxcan2ptrs_clump_original_scale.${GWASTAG}.${TISSUE}
+ptrs_file=$ptrs_prefix.results.h5
+
+if [[ ! -f $ptrs_file ]]
+then
+  echo "Running SPrediXcan2PTRS"
+  echo "Input: $pxcan_file"
+  echo "Output: $ptrs_file"
+  python $runscript \
+    --predixcan $pxcan_file \
+    --predictdb $predict_db \
+    --geno_cov $geno_cov_file \
+    --gwas $gwas \
+    --gwas_cols chromosome=chromosome \
+      position=position \
+      effect_allele=effect_allele \
+      non_effect_allele=non_effect_allele \
+    --gwas_sample_size $GWASN \
+    --output_prefix $ptrs_prefix \
+    --original_scale \
+    --clump
+fi
+```
+
+
+```{bash run script, eval=FALSE}
+gwastag=Standing_height
+tissue=Muscle_Skeletal
+nsample=336474
+qsub -v TISSUE=$tissue,GWASTAG=$gwastag,GWASN=$nsample -N $nsample run_LassoSum_PTRS.pbs  
+
+```
+
+# Save the h5 format as matrix 
+```{python convert to txt format, eval=FALSE}
+import h5py
+import numpy as np
+
+f = h5py.File('/scratch/nsanthanam1/Lassosum_PTRS/geno_cov/run_gtex_gwas_eur/spxcan2ptrs_clump_original_scale.Standing_height.Whole_Blood.results.h5', 'r')
+f.keys()
+f['dataset_0'].keys()
+
+weights = f['dataset_0']['betahat'][...]
+np.savetxt('/scratch/nsanthanam1/Lassosum_PTRS/geno_cov/run_gtex_gwas_eur/spxcan2ptrs.original.scale.Standing_height.Whole_Blood.results.tsv', weights, delimiter='\t')
+```
+
+## Calculate Predicted Height in Rats
+
+
+```{r file dir, eval=FALSE}
+data.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/"
+orth.rats <- read_tsv(data.dir %&% "expression/ortholog_genes_rats_humans.tsv", col_names = TRUE)
+```
+
+# Match genes in weights file in humans to Rat expression 
+```{r read in weights and expression, eval=FALSE}
+weights <- read_tsv(data.dir %&% "PTRS_weights/weight_files/spxcan2ptrs_original_scale.Standing_height.Whole_Blood.weights.tsv")
+weights <- read_tsv(data.dir %&% "PTRS_weights/weight_files/spxcan2ptrs_clump.Standing_height.Whole_Blood.weights.tsv")
+
+weights$gene_name <- sapply(strsplit(weights$gene_name, "\\."), `[`, 1)
+
+# Here we use predicted expression not predicted and make sure to use human ensembl id gene name
+pred_expr <- read_tsv(data.dir %&% "prediXcan/rat_metabolic_Ac__predict.txt") %>% select(-c(FID))
+```
+
+```{r filter expression for no overlap, eval=FASLE}
+all_rats <- read_tsv(data.dir %&% "MultiXcan/all_names.txt", col_names = TRUE)
+pred_expr <- pred_expr[-na.omit(match(all_rats$ID, pred_expr$IID)), ]
+```
+
+Filter for Genes with Human Ortholog
+```{r change gene name, eval=FALSE}
+#filter only for genes that have a human ortholog
+pred_expr <- pred_expr %>% select(c(IID, intersect(colnames(pred_expr), orth.rats$rnorvegicus_homolog_ensembl_gene) ))
+
+#change name to human ensembl id in humans
+colnames(pred_expr)[2:ncol(pred_expr)] <- orth.rats[match(colnames(pred_expr)[2:ncol(pred_expr)], orth.rats$rnorvegicus_homolog_ensembl_gene), 1] %>% .[["ensembl_gene_id"]]
+```
+
+```{r inner join all genes, eval=FASLE}
+#Do inner join of all genes in weight and expression files - 2,926 genes in common between the two
+rownames(weights) <- weights$gene_name
+weights <- weights[intersect(colnames(pred_expr), weights$gene_name), ]
+expr <- pred_expr[, intersect(colnames(pred_expr), weights$gene_name)]
+expr <- expr %>%  mutate(ID = pred_expr$IID, .before = "ENSG00000055211")
+```
+
+
+# Generate predicted values for Height using all models 
+```{r generate predicted trait, eval=FALSE}
+fn_generate_trait = function(exp, weights)
+  {
+   nrats = length(exp$ID)v
+   nmodels = ncol(weights) - 1
+   pred_height <- matrix(0, nrow = nrats, ncol = nmodels)
+   for(i in 1:nmodels) {
+     c1 <- as.matrix(weights[,i+1])
+     for(j in 1:nrats) {
+       df <- as.matrix(exp[j, 2:ncol(exp)])
+       pred_height[j,i] <- df %*% c1
+     }
+   }
+   rownames(pred_height) <- exp$ID
+   colnames(pred_height) <- colnames(weights)[2:ncol(weights)]
+}
+```
+
+
+# Compare Both Clump and Original Scale weights to Observed Height in Rats
+
+```{r read in predicted height and filter pheno}
+clump_height <- readRDS(dir %&% "predicted_height_WB_spxcan2ptrs_clump.RDS")
+orig_height <- readRDS(dir %&% "predicted_height_spxcan2ptrs_original_scale.RDS")
+
+n_genes_clump <- readRDS(dir %&% "n_genes_clump_Whole_Blood.RDS")
+n_genes_orig <- readRDS(dir %&% "n_genes_height_orig_scale.RDS")
+
+all_rats <- read_tsv(dir %&% "all_names.txt", col_names = TRUE)
+
+pheno <- read_csv(dir %&% "processed_obesity_rat_Palmer_phenotypes.csv") %>% dplyr::select(c(rat_rfid, bmi_bodylength_w_tail, bmi_bodylength_wo_tail, bodylength_w_tail, bodylength_wo_tail, tail_length)) 
+pheno <- pheno %>% filter(!(rat_rfid  %in% all_rats$ID))
+```
+# Create Dataframes with the correlation coefficient between trait in rats and ones predicted using PTRS from Humans
+```{r cor btw bodylength with tail  and predicted height}
+bodylength_w_tail <- pheno %>% dplyr::select(c(rat_rfid, bodylength_w_tail)) %>% na.omit()
+tempo_clump <- clump_height[na.omit(match(bodylength_w_tail$rat_rfid, rownames(clump_height))), ]
+tempo_orig <-  orig_height[na.omit(match(bodylength_w_tail$rat_rfid, rownames(orig_height))), ]
+
+bodylength_w_tail_orig <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n.genes = numeric())
+bodylength_w_tail_clump <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n.genes = numeric())
+
+for(i in 1:ncol(tempo_orig)){
+  bodylength_w_tail_orig[i,1] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo_orig[,i])$estimate
+  bodylength_w_tail_orig[i,2] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo_orig[,i])$p.value
+  bodylength_w_tail_orig[i,3] <- paste("model", i, sep = "_")
+  bodylength_w_tail_orig[i,4] <- n_genes_orig[i]
+  
+}
+
+for(i in 1:ncol(tempo_clump)) {
+ bodylength_w_tail_clump[i,1] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo_clump[,i])$estimate
+  bodylength_w_tail_clump[i,2] <- cor.test(bodylength_w_tail$bodylength_w_tail, tempo_clump[,i])$p.value
+  bodylength_w_tail_clump[i,3] <- paste("model", i, sep = "_")
+  bodylength_w_tail_clump[i,4] <- n_genes_clump[i]
+}
+```
+
+```{r cor btw taillength with tail  and predicted height}
+taillength <- pheno %>% dplyr::select(c(rat_rfid, tail_length)) %>% na.omit()
+tempo_clump <- clump_height[na.omit(match(taillength$rat_rfid, rownames(clump_height))), ]
+tempo_orig <-  orig_height[na.omit(match(taillength$rat_rfid, rownames(orig_height))), ]
+
+tail_length_orig <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n.genes = numeric())
+tail_length_clump <- data.frame(estimate = numeric(), pvalue = numeric(), model = character(), n.genes = numeric())
+
+for(i in 1:ncol(tempo_orig)){
+  tail_length_orig[i,1] <- cor.test(taillength$tail_length, tempo_orig[,i])$estimate
+  tail_length_orig[i,2] <- cor.test(taillength$tail_length, tempo_orig[,i])$p.value
+  tail_length_orig[i,3] <- paste("model", i, sep = "_")
+  tail_length_orig[i,4] <- n_genes_orig[i]
+  
+}
+
+for(i in 1:ncol(tempo_clump)) {
+ tail_length_clump[i,1] <- cor.test(taillength$tail_length, tempo_clump[,i])$estimate
+  tail_length_clump[i,2] <- cor.test(taillength$tail_length, tempo_clump[,i])$p.value
+  tail_length_clump[i,3] <- paste("model", i, sep = "_")
+  tail_length_clump[i,4] <- n_genes_clump[i]
+}
+```
+
+
+```{r plot performance for clump and original}
+ggplot(bodylength_w_tail_orig, aes(n.genes, estimate)) + geom_point(color = "magenta", position="jitter") + geom_line(color = "magenta") + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + ggtitle("Performance for Bodylength with Tail in Rats vs Predicted Height using original scale weights")
+
+
+ggplot(bodylength_w_tail_clump, aes(n.genes, estimate)) + geom_point(color = "black", position="jitter") + geom_line(color = "black") + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + ggtitle("Performance for Bodylength with Tail in Rats vs Predicted Height using Clumping")
+
+
+ggplot(tail_length_orig, aes(n.genes, estimate)) + geom_point(color = "magenta", position="jitter") + geom_line(color = "magenta") + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + ggtitle("Performance for Tail length in Rats vs Predicted Height using original scale weights")
+
+
+ggplot(tail_length_clump, aes(n.genes, estimate)) + geom_point(color = "magenta", position="jitter") + geom_line(color = "magenta") + xlab("Number of genes in each model") + ylab("Correlation Coefficient (r)") + ggtitle("Performance for Tail length in Rats vs Predicted Height using weights with clumping")
+
+```
+

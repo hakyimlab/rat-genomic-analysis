@@ -1,0 +1,260 @@
+---
+title: "Rat_GEMMA"
+author: "Natasha Santhanam"
+date: "3/1/2021"
+output: html_document
+---
+Generate Genotype Files for all elements (cis + trans) ~ This done Locally
+```{r}
+library(tidyverse)
+load("~/Box/imlab-data/Projects/PTRS-PGRS-Rosetta/Data-From-Abe-Palmer-Lab/Rdata/genoGex.RData")
+"%&%" = function(a,b) paste(a,b,sep="")
+wd <- "/Users/natashasanthanam/Github/rat-genomic-analysis/data/"
+
+geno_Ac = geno[,match(rownames(gexAc_transpose), colnames(geno))]
+geno_Il = geno[,match(rownames(gexIl_transpose), colnames(geno))]
+geno_Lh = geno[,match(rownames(gexLh_transpose), colnames(geno))]
+geno_Pl = geno[,match(rownames(gexPl_transpose), colnames(geno))]
+geno_Vo = geno[,match(rownames(gexVo_transpose), colnames(geno))]
+
+Ac_bimbam <- cbind(phyMap$chr, phyMap$pos, rownames(geno_Ac), phyMap$refAllele, phyMap$effectAllele, geno_Ac)
+Il_bimbam <- cbind(phyMap$chr, phyMap$pos, rownames(geno_Il),phyMap$refAllele, phyMap$effectAllele,  geno_Il)
+Lh_bimbam <- cbind(phyMap$chr, phyMap$pos, rownames(geno_Lh),phyMap$refAllele, phyMap$effectAllele,  geno_Lh)
+Pl_bimbam <- cbind(phyMap$chr, phyMap$pos, rownames(geno_Pl),phyMap$refAllele, phyMap$effectAllele,  geno_Pl)
+Vo_bimbam <- cbind(phyMap$chr, phyMap$pos, rownames(geno_Vo),phyMap$refAllele, phyMap$effectAllele,  geno_Vo)
+
+write.table(Ac_bimbam, file = wd %&% "Ac_bimbam",quote=F,col.names=F,row.names=F)
+write.table(Il_bimbam, file = wd %&% "Il_bimbam",quote=F,col.names=F,row.names=F)
+write.table(Lh_bimbam, file = wd %&% "Lh_bimbam",quote=F,col.names=F,row.names=F)
+write.table(Pl_bimbam, file = wd %&%"Pl_bimbam",quote=F,col.names=F,row.names=F)
+write.table(Vo_bimbam, file = wd %&%"Vo_bimbam",quote=F,col.names=F,row.names=F)
+```
+
+~ Generate individual genotype files for each gene including only cis elements; this will be done in CRI
+```{r}
+gtf <- read_tsv("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/gtf.txt", col_names=TRUE)
+gexAc_transpose <- read.table("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/gexAc_transpose.txt")
+gexIl_transpose <- read.table("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/gexIl_transpose.txt")
+gexLh_transpose <- read.table("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/gexLh_transpose.txt")
+gexPl_transpose <- read.table("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/gexPl_transpose.txt")
+gexVo_transpose <- read.table("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/Box_files/gexVo_transpose.txt")
+
+ensidlist <- colnames(gexAc_transpose)
+ensidlist_Il <- colnames(gexIl_transpose)
+ensidlist_Lh <- colnames(gexLh_transpose)
+ensidlist_Pl <- colnames(gexPl_transpose)
+ensidlist_Vo <- colnames(gexVo_transpose)
+```
+
+##Ac
+```{r}
+pheno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/genotype_files/"
+bim.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/bim_bam/"
+#Read in bimbam file 
+bimbamfile <- bim.dir %&% "Ac_bimbam" ###get SNP position information###
+bimbam <- read.table(bimbamfile)
+```
+
+#Make local GRMs for each gene
+```{r}
+setwd("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Ac/")
+for(i in 1:length(ensidlist)){
+    # cat(i,"/",length(ensidlist),"\n")
+    # gene <- ensidlist[i]
+    # geneinfo <- gtf[match(gene, gtf$Gene),]
+    # chr <- geneinfo[1]
+    # c <- chr$Chr
+    # start <- geneinfo$Start - 1e6 ### 1Mb lower bound for cis-eQTLS
+    # end <- geneinfo$End + 1e6 ### 1Mb upper bound for cis-eQTLs
+    # chrsnps <- subset(bimbam, bimbam[,1]==c) ### pull snps on same chr
+    # cissnps <- subset(chrsnps,chrsnps[,2]>=start & chrsnps[,2]<=end) ### pull cis-SNP info
+    # snplist <- cissnps[,3:ncol(cissnps)]    
+    # write.table(snplist, file= ge.dir %&% "tmp.Ac.geno" %&% gene, quote=F,col.names=F,row.names=F)
+    
+    geneexp <- cbind(gexAc_transpose[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% gene, col.names=F, row.names = F, quote=F) #output pheno for gemma
+    runGEMMAgrm <- "gemma -g " %&%  ge.dir %&% "tmp.Ac.geno" %&% gene %&% " -p " %&% pheno.dir %&% "tmp.pheno." %&%  gene  %&%  " -gk -o grm_Ac_" %&% gene
+    system(runGEMMAgrm)
+}
+```
+
+
+##Il
+```{r}
+pheno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Il/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Il/genotype_files/"
+bim.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Il/bim_bam/"
+#Read in bimbam file 
+bimbamfile <- bim.dir %&% "Il_bimbam" ###get SNP position information###
+bimbam <- read.table(bimbamfile)
+```
+
+#Make local GRMs for each gene
+```{r}
+setwd("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Il/")
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$Gene),]
+    chr <- geneinfo[1]
+    c <- chr$Chr
+    start <- geneinfo$Start - 1e6 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$End + 1e6 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bimbam, bimbam[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,2]>=start & chrsnps[,2]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,3:ncol(cissnps)]    
+    write.table(snplist, file= ge.dir %&% "tmp.Il.geno" %&% gene, quote=F,col.names=F,row.names=F)
+    
+    geneexp <- cbind(gexIl_transpose[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% gene, col.names=F, row.names = F, quote=F) #output pheno for gemma
+    runGEMMAgrm <- "gemma -g " %&%  ge.dir %&% "tmp.Il.geno" %&% gene %&% " -p " %&% pheno.dir %&% "tmp.pheno." %&%  gene  %&%  " -gk -o grm_Il_" %&% gene
+    system(runGEMMAgrm)
+}
+```
+
+
+##Lh
+```{r}
+pheno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Lh/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Lh/genotype_files/"
+bim.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Lh/bim_bam/"
+#Read in bimbam file 
+bimbamfile <- bim.dir %&% "Lh_bimbam" ###get SNP position information###
+bimbam <- read.table(bimbamfile)
+```
+
+#Make local GRMs for each gene
+```{r}
+setwd("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Lh/")
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$Gene),]
+    chr <- geneinfo[1]
+    c <- chr$Chr
+    start <- geneinfo$Start - 1e6 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$End + 1e6 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bimbam, bimbam[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,2]>=start & chrsnps[,2]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,3:ncol(cissnps)]    
+    write.table(snplist, file= ge.dir %&% "tmp.Lh.geno" %&% gene, quote=F,col.names=F,row.names=F)
+    
+    geneexp <- cbind(gexLh_transpose[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% gene, col.names=F, row.names = F, quote=F) #output pheno for gemma
+    runGEMMAgrm <- "gemma -g " %&%  ge.dir %&% "tmp.Lh.geno" %&% gene %&% " -p " %&% pheno.dir %&% "tmp.pheno." %&%  gene  %&%  " -gk -o grm_Lh_" %&% gene
+    system(runGEMMAgrm)
+}
+```
+
+
+##Pl
+```{r}
+pheno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Pl/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Pl/genotype_files/"
+bim.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Pl/bim_bam/"
+#Read in bimbam file 
+bimbamfile <- bim.dir %&% "Pl_bimbam" ###get SNP position information###
+bimbam <- read.table(bimbamfile)
+```
+
+#Make local GRMs for each gene
+```{r}
+setwd("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Pl/")
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$Gene),]
+    chr <- geneinfo[1]
+    c <- chr$Chr
+    start <- geneinfo$Start - 1e6 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$End + 1e6 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bimbam, bimbam[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,2]>=start & chrsnps[,2]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,3:ncol(cissnps)]    
+    write.table(snplist, file= ge.dir %&% "tmp.Pl.geno" %&% gene, quote=F,col.names=F,row.names=F)
+    
+    geneexp <- cbind(gexPl_transpose[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% gene, col.names=F, row.names = F, quote=F) #output pheno for gemma
+    runGEMMAgrm <- "gemma -g " %&%  ge.dir %&% "tmp.Pl.geno" %&% gene %&% " -p " %&% pheno.dir %&% "tmp.pheno." %&%  gene  %&%  " -gk -o grm_Pl_" %&% gene
+    system(runGEMMAgrm)
+}
+```
+
+
+##Vo
+```{r}
+pheno.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Vo/phenotype_files/"
+ge.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Vo/genotype_files/"
+bim.dir <- "/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Vo/bim_bam/"
+#Read in bimbam file 
+bimbamfile <- bim.dir %&% "Vo_bimbam" ###get SNP position information###
+bimbam <- read.table(bimbamfile)
+```
+
+#Make local GRMs for each gene
+```{r}
+setwd("/gpfs/data/im-lab/nas40t2/natasha/rat_genomics/GEMMA/Vo/")
+for(i in 1:length(ensidlist)){
+    cat(i,"/",length(ensidlist),"\n")
+    gene <- ensidlist[i]
+    geneinfo <- gtf[match(gene, gtf$Gene),]
+    chr <- geneinfo[1]
+    c <- chr$Chr
+    start <- geneinfo$Start - 1e6 ### 1Mb lower bound for cis-eQTLS
+    end <- geneinfo$End + 1e6 ### 1Mb upper bound for cis-eQTLs
+    chrsnps <- subset(bimbam, bimbam[,1]==c) ### pull snps on same chr
+    cissnps <- subset(chrsnps,chrsnps[,2]>=start & chrsnps[,2]<=end) ### pull cis-SNP info
+    snplist <- cissnps[,3:ncol(cissnps)]    
+    write.table(snplist, file= ge.dir %&% "tmp.Vo.geno" %&% gene, quote=F,col.names=F,row.names=F)
+    
+    geneexp <- cbind(gexVo_transpose[,i])
+	write.table(geneexp, file= pheno.dir %&% "tmp.pheno." %&% gene, col.names=F, row.names = F, quote=F) #output pheno for gemma
+    runGEMMAgrm <- "gemma -g " %&%  ge.dir %&% "tmp.Vo.geno" %&% gene %&% " -p " %&% pheno.dir %&% "tmp.pheno." %&%  gene  %&%  " -gk -o grm_Vo_" %&% gene
+    system(runGEMMAgrm)
+}
+```
+
+
+#Calculate PVG/PGE using badger
+
+
+Plot the GRM * compare trans elements to that from hapmap
+```{r}
+grm_ac <- read_tsv("/Users/natashasanthanam/Github/rat-genomic-analysis/data/grm_Ac.cXX.txt", col_names = FALSE)
+grm_ac <- as.matrix(grm_ac)
+rownames(grm_ac) <- pheno_Ac$X1
+colnames(grm_ac) <- pheno_Ac$X1
+heatmap(grm_ac)
+
+df <- as.data.frame(grm_ac)
+pca_res <- prcomp(df, scale. = TRUE)
+autoplot(pca_res)
+
+off_diagnol <- grm_ac[upper.tri(grm_ac, diag = FALSE)]
+hist(off_diagnol, main = "GRM from gemma")
+p1 <- qplot(off_diagnol, geom="histogram", bins = 30, fill=I("pink"), col=I("red"), main = "GRM from gemma")
+summary(off_diagnol)
+```
+
+Compare to GRM from hapmap 1 snps
+```{r}
+hapmap_grm <- read.table(wd %&% "hapmap1_grm.cXX.txt")
+off_diagnol_hap <- hapmap_grm[upper.tri(hapmap_grm, diag = FALSE)]
+hist2 <- hist(off_diagnol_hap, main = "GRM from hapmap1")
+summary(off_diagnol_hap)
+
+p2 <- qplot(off_diagnol_hap, geom="histogram", bins = 30, fill=I("pink"), col=I("red"), main = "GRM from hapmap1")
+
+ggarrange(p1, p2, 
+          ncol = 1, nrow = 2)
+```
+
+
+
+
+
+
+
+
+
